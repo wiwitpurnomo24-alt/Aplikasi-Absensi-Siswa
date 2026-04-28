@@ -1,0 +1,6 @@
+{
+  "name": "Absensi Siswa SMPN 2 Magelang",
+  "description": "Sistem informasi absensi siswa terintegrasi WhatsApp untuk SMP Negeri 2 Magelang.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": []
+}

@@ -1,0 +1,179 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Student master data",
+      "type": "object",
+      "properties": {
+        "nis": { "type": "string" },
+        "nisn": { "type": "string" },
+        "name": { "type": "string" },
+        "className": { "type": "string" },
+        "absensiNo": { "type": "string" },
+        "gender": { "type": "string" }
+      },
+      "required": ["nis", "name", "className"]
+    },
+    "StudentPII": {
+      "title": "Student PII",
+      "description": "Student sensitive information (DOB/Address)",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "dateOfBirth": { "type": "string", "format": "date" },
+        "address": { "type": "string" }
+      },
+      "required": ["studentId", "dateOfBirth", "address"]
+    },
+    "Teacher": {
+      "title": "Teacher / Homeroom Teacher",
+      "description": "Teacher profiles",
+      "type": "object",
+      "properties": {
+        "nip": { "type": "string" },
+        "name": { "type": "string" },
+        "className": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "status": { "type": "array" },
+        "subjects": { "type": "array" },
+        "taughtClasses": { "type": "array" }
+      },
+      "required": ["nip", "name", "className"]
+    },
+    "Attendance": {
+      "title": "Attendance Record",
+      "description": "Absensi submission (Sakit/Izin/Dispensasi)",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "date": { "type": "string" },
+        "day": { "type": "string" },
+        "parentName": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "type": { "enum": ["Sakit", "Izin", "Dispensasi"] },
+        "reason": { "type": "string" },
+        "status": { "enum": ["Pending", "Approved", "Rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "type", "date", "status"]
+    },
+    "SubjectInquiry": {
+      "title": "Subject Teacher Inquiry",
+      "description": "Inquiry from subject teacher about missing student",
+      "type": "object",
+      "properties": {
+        "subjectTeacherName": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "className": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "status": { "enum": ["Unconfirmed", "Found", "Excused"] },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SchoolData": {
+      "title": "School Data",
+      "description": "School information for reports and administration",
+      "type": "object",
+      "properties": {
+        "pemda": { "type": "string" },
+        "dinas": { "type": "string" },
+        "sekolah": { "type": "string" },
+        "alamat": { "type": "string" },
+        "kota": { "type": "string" },
+        "kepalaSekolah": { "type": "string" },
+        "nipKepalaSekolah": { "type": "string" }
+      }
+    },
+    "AttendanceAlert": {
+      "title": "Attendance Alert",
+      "description": "Early warning system for absences",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "alertType": { "enum": ["consecutive", "total"] },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "status": { "enum": ["active", "resolved"] }
+      },
+      "required": ["studentId", "alertType", "details", "createdAt", "status"]
+    },
+    "SubjectAttendance": {
+      "title": "Subject Teacher Attendance",
+      "description": "Attendance log for a specific subject class session",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "date": { "type": "string" },
+        "period": { "type": "string" },
+        "status": { "enum": ["S", "I", "D", "A", "H"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/subjectAttendance/{id}": {
+      "schema": "SubjectAttendance",
+      "description": "Attendance logs from subject teachers"
+    },
+    "/schoolData/{id}": {
+      "schema": "SchoolData",
+      "description": "School information management"
+    },
+    "/subjectInquiries/{inquiryId}": {
+      "schema": "SubjectInquiry",
+      "description": "Inquiries from subject teachers"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Collection of students"
+    },
+    "/student_pii/{studentId}": {
+      "schema": "StudentPII",
+      "description": "Collection of student PII"
+    },
+    "/teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Collection of teachers"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Collection of attendance records"
+    },
+    "/attendance_alerts/{alertId}": {
+      "schema": "AttendanceAlert",
+      "description": "Collection of attendance alerts"
+    },
+    "/academicYears/{yearId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "year": { "type": "string" },
+          "active": { "type": "boolean" }
+        }
+      },
+      "description": "Academic years configuration"
+    },
+    "/counselors/{counselorId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "nip": { "type": "string" },
+          "managedClasses": { "type": "array" }
+        }
+      },
+      "description": "Counselor profiles"
+    }
+  }
+}
