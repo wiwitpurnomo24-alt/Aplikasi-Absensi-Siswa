@@ -16,6 +16,7 @@ const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AttendanceOfficerDashboard = lazy(() => import('./pages/AttendanceOfficerDashboard'));
 const SubjectTeacherDashboard = lazy(() => import('./pages/SubjectTeacherDashboard'));
+const SchoolPresencePage = lazy(() => import('./pages/SchoolPresencePage'));
 
 export default function App() {
   return (
@@ -58,9 +59,17 @@ export default function App() {
               } 
             />
             <Route 
+              path="school-presence" 
+              element={
+                <RoleGuard allowedRoles={['ADMIN', 'TEACHER', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH']}>
+                  <SchoolPresencePage />
+                </RoleGuard>
+              } 
+            />
+            <Route 
               path="attendance-officer" 
               element={
-                <RoleGuard allowedRoles={['ADMIN', 'TEACHER', 'COUNSELOR', 'STUDENT', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH']}>
+                <RoleGuard allowedRoles={['ADMIN', 'PETUGAS_ABSEN_KELAS', 'TEACHER', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH']}>
                   <AttendanceOfficerDashboard />
                 </RoleGuard>
               } 

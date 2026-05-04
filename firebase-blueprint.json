@@ -119,6 +119,46 @@
         "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System notification",
+      "type": "object",
+      "properties": {
+        "className": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentId": { "type": "string" },
+        "message": { "type": "string" },
+        "title": { "type": "string" },
+        "read": { "type": "boolean" },
+        "type": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "targetRole": { "type": "string" }
+      }
+    },
+    "SchoolPresence": {
+      "title": "School Presence",
+      "description": "Daily school presence (arrival, activity, departure)",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "type": { "enum": ["arrival", "activity", "departure"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" },
+        "activityName": { "type": "string" }
+      },
+      "required": ["studentId", "type", "timestamp"]
+    },
+    "SchoolConfig": {
+      "title": "School Config",
+      "description": "School operational configuration",
+      "type": "object",
+      "properties": {
+        "entryTime": { "type": "string" },
+        "departureTime": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -150,6 +190,14 @@
       "schema": "Attendance",
       "description": "Collection of attendance records"
     },
+    "/schoolPresence/{presenceId}": {
+      "schema": "SchoolPresence",
+      "description": "Collection of daily school presence logs"
+    },
+    "/schoolConfig/{configId}": {
+      "schema": "SchoolConfig",
+      "description": "School configuration settings"
+    },
     "/attendance_alerts/{alertId}": {
       "schema": "AttendanceAlert",
       "description": "Collection of attendance alerts"
@@ -163,6 +211,10 @@
         }
       },
       "description": "Academic years configuration"
+    },
+    "/notifications/{id}": {
+      "schema": "Notification",
+      "description": "System notifications"
     },
     "/counselors/{counselorId}": {
       "schema": {

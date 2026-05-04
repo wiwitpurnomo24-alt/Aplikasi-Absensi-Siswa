@@ -12,6 +12,8 @@ export interface Student {
   absensiNo?: string;
   gender: 'L' | 'P';
   parentPassword?: string;
+  userId?: string;
+  password?: string;
 }
 
 export interface StudentPII {
@@ -69,12 +71,15 @@ export interface SchoolData {
   kota: string;
   kepalaSekolah: string;
   nipKepalaSekolah: string;
-  logoUrl?: string;
+  logoUrl?: string; // App Logo (Dutatama)
+  schoolLogoUrl?: string; // School Logo (SMPN)
 }
 
 export interface SchoolClass {
   id: string;
   name: string;
+  color?: string;
+  icon?: string;
 }
 
 export interface AcademicYear {
@@ -102,18 +107,25 @@ export interface SubjectAttendance {
 export interface SubjectTeacherInquiry {
   id: string;
   subjectTeacherName: string;
+  subjectTeacherId?: string;
   subjectName: string;
   className: string;
   studentId: string;
   studentName: string;
   date: string;
+  day: string;
+  time: string;
   period?: string;
-  // STATUS: 'Menunggu' | 'Sudah di Jawab'
-  status: 'Menunggu' | 'Sudah di Jawab';
+  status: 'Menunggu' | 'Sudah di Jawab' | 'Dijawab';
   message: string;
   response?: string;
   respondedBy?: string;
   respondedAt?: any;
+  replies?: {
+    message: string;
+    sender: string;
+    createdAt: any;
+  }[];
   createdAt: any;
   category?: 'Pertanyaan' | 'Konfirmasi';
 }

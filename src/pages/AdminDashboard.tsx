@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, 
@@ -13,34 +13,43 @@ import {
   CheckCircle2,
   X,
   XCircle,
-  FilePlus,
   RefreshCw,
   LayoutGrid,
   Filter,
   FileText,
+  ShieldCheck,
+  Key,
+  IdCard,
+  MessageCircle,
+  MessageSquare,
   Download,
-  Clock,
   AlertCircle,
-  Calendar as CalendarIcon,
+  Printer,
+  ChevronLeft,
+  ChevronRight,
+  MoreVertical,
+  Clock,
   MapPin,
   Smartphone,
-  MessageCircle,
   CloudUpload,
-  IdCard
+  Activity,
+  UserCheck,
+  QrCode,
+  Bell,
+  BellRing,
+  HardDrive,
+  BookOpen, Library, School, Award, Trophy, Medal, Star, Bookmark, Calculator, Palette, Music, Languages, Cpu, Atom, FlaskConical, Globe, History, Briefcase, Zap, Target, Anchor, Compass, Feather, PenTool
 } from 'lucide-react';
+
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, where, orderBy, onSnapshot, Timestamp, serverTimestamp } from 'firebase/firestore';
-import { cn, formatDate } from '../lib/utils';
+import { collection, addDoc, getDocs, getDoc, deleteDoc, doc, updateDoc, query, where, orderBy, onSnapshot, Timestamp, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { cn, formatDate, getTimeSafe } from '../lib/utils';
 import { Student, Teacher, AcademicYear, AttendanceRecord } from '../types';
 import { useAuthStore } from '../lib/auth-store';
 import * as XLSX from 'xlsx';
 import { parseWhatsAppMessage } from '../lib/whatsapp-parser';
-import {ROLE_LABELS} from '../constants';
-import {jsPDF} from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import QRCode from 'qrcode';
-
+import { ROLE_LABELS, CLASS_COLORS, CLASS_ICONS } from '../constants';
 import { useSearchParams } from 'react-router-dom';
 import AttendanceRecapTable from '../components/AttendanceRecapTable';
 import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
@@ -52,7 +61,25 @@ import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
 import SchoolDataSettings from '../components/SchoolDataSettings';
 import LogoSettings from '../components/LogoSettings';
-import StudentPIITab from '../components/StudentPIITab';
+import { AttendanceConfig } from '../components/AttendanceConfig';
+import { WhatsAppSettings } from '../components/WhatsAppSettings';
+import { ScannerStatus } from '../components/ScannerStatus';
+import { exportAttendanceToPDF, generateQRCodeDataUrl, printStudentCard } from '../services/pdfService';
+import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+const getLucideIcon = (iconName: string) => {
+  const icons: Record<string, any> = {
+    BookOpen, GraduationCap, Users, Library, School, Award, Trophy, Medal,
+    Star, Bookmark, Calculator, Palette, Music, Languages, Cpu, Atom,
+    FlaskConical, Globe, History, Briefcase, Zap, Target, Anchor, Compass,
+    Activity, Feather, PenTool, Search, Database, LayoutGrid
+  };
+  return icons[iconName] || GraduationCap;
+};
+
+const CalendarIcon = Calendar;
 
 export default function AdminDashboard() {
   const { user } = useAuthStore();
@@ -60,7 +87,9 @@ export default function AdminDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as any;
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'student-pii' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
+  const [filterMonth, setFilterMonth] = useState('');
+  const [filterSemester, setFilterSemester] = useState('');
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -86,14 +115,60 @@ export default function AdminDashboard() {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [subjectAttendances, setSubjectAttendances] = useState<any[]>([]);
   const [subjectInquiries, setSubjectInquiries] = useState<any[]>([]);
+  const [presenceRecords, setPresenceRecords] = useState<any[]>([]);
+  const [presenceConfig, setPresenceConfig] = useState({ entryTime: '06:30' });
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [schoolInfo, setSchoolInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [success, setSuccess] = useState(false);
+  const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
+  const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<Student | null>(null);
+  const [studentAttendanceHistory, setStudentAttendanceHistory] = useState<AttendanceRecord[]>([]);
+  const [showStudentDetailModal, setShowStudentDetailModal] = useState(false);
+
+  const handleShowStudentDetail = async (student: Student) => {
+    setSelectedStudentForDetail(student);
+    try {
+      const q = query(collection(db, 'attendance'), where('studentId', '==', student.id), orderBy('date', 'desc'));
+      const attSnapshot = await getDocs(q);
+      setStudentAttendanceHistory(attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord)));
+      setShowStudentDetailModal(true);
+    } catch (err: any) {
+      console.warn("handleShowStudentDetail orderBy failed, using fallback:", err);
+      try {
+        const fallbackQ = query(collection(db, 'attendance'), where('studentId', '==', student.id));
+        const attSnapshot = await getDocs(fallbackQ);
+        const data = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord))
+          .sort((a,b) => (a.date === b.date ? 0 : (a.date < b.date ? 1 : -1)));
+        setStudentAttendanceHistory(data);
+        setShowStudentDetailModal(true);
+      } catch (err2) {
+        handleFirestoreError(err, 'list', 'attendance_history');
+      }
+    }
+  };
   
+  const downloadDocument = (url: string, studentName: string, date: string, type: string) => {
+    const link = document.createElement('a');
+    link.href = url;
+    // Extract extension from base64 or url
+    let ext = 'jpg';
+    if (url.includes('pdf')) ext = 'pdf';
+    else if (url.includes('png')) ext = 'png';
+    else if (url.includes('jpeg')) ext = 'jpg';
+    
+    const fileName = `DOKUMEN_${type.toUpperCase()}_${studentName.replace(/\s+/g, '_')}_${date}.${ext}`;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const showConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({isOpen: true, message, onConfirm});
   };
@@ -103,17 +178,15 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!authReady) return;
 
-    const q = query(
+    const qAtt = query(
       collection(db, 'attendance'),
       orderBy('submittedAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeAtt = onSnapshot(qAtt, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const newItem = { id: change.doc.id, ...change.doc.data() } as AttendanceRecord;
-          // Only show if it's actual new data (check submittedAt if possible, or just skip first bulk load)
-          // Since it's a real-time app, we want the toast for truly new items
           const submittedAt = newItem.submittedAt?.toDate ? newItem.submittedAt.toDate() : new Date();
           const now = new Date();
           if (now.getTime() - submittedAt.getTime() < 10000) { // within 10 seconds
@@ -124,7 +197,20 @@ export default function AdminDashboard() {
       });
     });
 
-    return () => unsubscribe();
+    const qNotif = query(
+      collection(db, 'notifications'),
+      where('targetRole', '==', 'ADMIN'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribeNotif = onSnapshot(qNotif, (snapshot) => {
+      setAdminNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubscribeAtt();
+      unsubscribeNotif();
+    };
   }, [authReady]);
 
   // Pagination & Multi-select
@@ -147,10 +233,10 @@ export default function AdminDashboard() {
       const classStudents = students.filter(s => s.className === formData.tempClassForOfficer);
       const promises = classStudents.map(s => {
         const isNowOfficer = selectedClassOfficers.includes(s.id!);
-        const wasOfficer = (s as any).role === 'STUDENT';
+        const wasOfficer = (s as any).role === 'PETUGAS_ABSEN_KELAS';
         if (isNowOfficer !== wasOfficer) {
           return updateDoc(doc(db, 'students', s.id!), {
-            role: isNowOfficer ? 'STUDENT' : null
+            role: isNowOfficer ? 'PETUGAS_ABSEN_KELAS' : null
           });
         }
         return null;
@@ -168,9 +254,96 @@ export default function AdminDashboard() {
   };
 
   const allOfficers = useMemo(() => {
-    return students.filter(s => (s as any).role === 'STUDENT')
+    return students.filter(s => (s as any).role === 'PETUGAS_ABSEN_KELAS')
       .sort((a,b) => (a.className || '').localeCompare(b.className || '', undefined, {numeric: true}) || (a.name || '').localeCompare(b.name || ''));
   }, [students]);
+
+  const duplicateNises = useMemo(() => {
+    const nisCount: { [key: string]: number } = {};
+    students.forEach(s => {
+      if (s.nis) nisCount[s.nis] = (nisCount[s.nis] || 0) + 1;
+    });
+    return Object.keys(nisCount).filter(nis => nisCount[nis] > 1);
+  }, [students]);
+
+  const duplicateNips = useMemo(() => {
+    const nipCount: { [key: string]: number } = {};
+    teachers.forEach(t => {
+      if (t.nip) nipCount[t.nip] = (nipCount[t.nip] || 0) + 1;
+    });
+    return Object.keys(nipCount).filter(nip => nipCount[nip] > 1);
+  }, [teachers]);
+
+  const handleDeleteDuplicateStudents = () => {
+    const toDelete: string[] = [];
+    const seen = new Set();
+    // Keep the first one, delete subsequent ones
+    students.forEach(s => {
+      if (s.nis && duplicateNises.includes(s.nis)) {
+        if (seen.has(s.nis)) {
+          toDelete.push(s.id!);
+        } else {
+          seen.add(s.nis);
+        }
+      }
+    });
+
+    if (toDelete.length === 0) {
+      alert('Tidak ada data ganda yang ditemukan.');
+      return;
+    }
+
+    showConfirm(`Hapus ${toDelete.length} data ganda siswa (keep first)?`, async () => {
+      setLoading(true);
+      try {
+        const promises = toDelete.map(id => deleteDoc(doc(db, 'students', id)));
+        await Promise.all(promises);
+        fetchData();
+        setStatusMessage(`${toDelete.length} data ganda berhasil dihapus`);
+        setTimeout(() => setStatusMessage(''), 3000);
+      } catch (err) {
+        console.error(err);
+        alert('Gagal menghapus data ganda.');
+      } finally {
+        setLoading(false);
+      }
+    });
+  };
+
+  const handleDeleteDuplicateTeachers = () => {
+    const toDelete: string[] = [];
+    const seen = new Set();
+    teachers.forEach(t => {
+      if (t.nip && duplicateNips.includes(t.nip)) {
+        if (seen.has(t.nip)) {
+          toDelete.push(t.id!);
+        } else {
+          seen.add(t.nip);
+        }
+      }
+    });
+
+    if (toDelete.length === 0) {
+      alert('Tidak ada data ganda yang ditemukan.');
+      return;
+    }
+
+    showConfirm(`Hapus ${toDelete.length} data ganda guru (keep first)?`, async () => {
+      setLoading(true);
+      try {
+        const promises = toDelete.map(id => deleteDoc(doc(db, 'teachers', id)));
+        await Promise.all(promises);
+        fetchData();
+        setStatusMessage(`${toDelete.length} data ganda berhasil dihapus`);
+        setTimeout(() => setStatusMessage(''), 3000);
+      } catch (err) {
+        console.error(err);
+        alert('Gagal menghapus data ganda.');
+      } finally {
+        setLoading(false);
+      }
+    });
+  };
 
   const handleRemoveOfficer = (id: string) => {
     showConfirm('Hapus peran petugas dari siswa ini?', async () => {
@@ -184,9 +357,40 @@ export default function AdminDashboard() {
       }
     });
   };
+
+  const markNotificationAsRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    const unread = adminNotifications.filter(n => !n.read);
+    if (unread.length === 0) return;
+    try {
+      setLoading(true);
+      const promises = unread.map(n => updateDoc(doc(db, 'notifications', n.id), { read: true }));
+      await Promise.all(promises);
+      setLoading(false);
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'notifications', id));
+    } catch (err) {
+      console.error(err);
+    }
+  };
   const itemsPerPage = 12;
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [selectedTeachers, setSelectedTeachers] = useState<string[]>([]);
+  const [selectedOfficers, setSelectedOfficers] = useState<string[]>([]);
   
   // Counselor specific filtering
   const [filterMode, setFilterMode] = useState<'all' | 'managed'>(user?.role === 'COUNSELOR' ? 'managed' : 'all');
@@ -194,9 +398,12 @@ export default function AdminDashboard() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState<any>({});
+  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data'>('umum');
 
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printClass, setPrintClass] = useState('');
+  const [showParentPrintModal, setShowParentPrintModal] = useState(false);
+  const [parentPrintClass, setParentPrintClass] = useState('');
 
   const downloadStudentsPDF = () => {
     const doc = new jsPDF();
@@ -249,9 +456,19 @@ export default function AdminDashboard() {
     
     let currentTeachers = teachers;
     if (type === 'Wali Kelas') {
-      currentTeachers = teachers.filter(t => t.status?.includes('Wali Kelas'));
+      currentTeachers = teachers.filter(t => {
+        const isWaliKelasExplicit = t.status?.includes('Wali Kelas');
+        const isWaliKelasLinked = classes.some(c => c.waliKelasId === t.id || (t.className && c.name.toLowerCase().replace(/\s/g, '') === t.className.toLowerCase().replace(/\s/g, '')));
+        return isWaliKelasExplicit || isWaliKelasLinked;
+      }).map(t => {
+        if (!t.className) {
+          const assignedClass = classes.find(c => c.waliKelasId === t.id);
+          if (assignedClass) return { ...t, className: assignedClass.name };
+        }
+        return t;
+      });
     } else if (type === 'Guru Mapel') {
-      currentTeachers = teachers.filter(t => t.status?.includes('Guru Mata Pelajaran'));
+      currentTeachers = teachers.filter(t => t.status?.includes('Guru Mapel'));
     }
 
     if (searchTerm) {
@@ -271,6 +488,7 @@ export default function AdminDashboard() {
           t.name,
           t.nip || '-',
           t.password || '-',
+          t.phoneNumber || '-',
           (t.taughtClasses || []).join(', ') || '-'
         ];
       } else if (type === 'Guru Mapel') {
@@ -279,6 +497,7 @@ export default function AdminDashboard() {
           t.name,
           t.nip || '-',
           t.password || '-',
+          t.phoneNumber || '-',
           (t.subjects || []).join(', ') || '-',
           (t.taughtClasses || []).join(', ') || '-'
         ];
@@ -288,15 +507,16 @@ export default function AdminDashboard() {
           t.name,
           t.nip || '-',
           t.password || '-',
+          t.phoneNumber || '-',
           (t.status || []).join(', ') || '-'
         ];
       }
     });
 
     let head = [];
-    if (type === 'Wali Kelas') head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Kelas Ampuan']];
-    else if (type === 'Guru Mapel') head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Mata Pelajaran', 'Kelas yang Diajar']];
-    else head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Status/Tugas']];
+    if (type === 'Wali Kelas') head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Kelas Ampuan']];
+    else if (type === 'Guru Mapel') head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Mata Pelajaran', 'Kelas yang Diajar']];
+    else head = [['No', 'Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Status/Tugas']];
 
     autoTable(doc, {
       startY: 30,
@@ -340,101 +560,153 @@ export default function AdminDashboard() {
     });
   };
 
-  const printLoginCards = (selectedClass: string) => {
+  const printLoginCards = async (selectedClass: string, printType: 'SISWA' | 'ORTU' = 'SISWA') => {
     const classSds = students.filter(s => s.className === selectedClass);
     if (classSds.length === 0) {
       alert('Tidak ada siswa di kelas ini.');
       return;
     }
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const cardWidth = 90;
-    const cardHeight = 55;
-    const margin = 10;
-    const cardsPerRow = 2;
-    const cardsPerCol = 5;
-    const xSpacing = (210 - (cardWidth * cardsPerRow) - (margin * 2)) / (cardsPerRow - 1 || 1);
-    const ySpacing = (297 - (cardHeight * cardsPerCol) - (margin * 2)) / (cardsPerCol - 1 || 1);
+    setLoading(true);
+    setStatusMessage(`Sedang menyiapkan kartu login ${printType === 'ORTU' ? 'orang tua' : 'siswa'} kelas ${selectedClass}...`);
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'legal'
+      });
 
-    classSds.forEach((s, index) => {
-      const pageIndex = index % (cardsPerRow * cardsPerCol);
-      if (index > 0 && pageIndex === 0) doc.addPage();
-
-      const row = Math.floor(pageIndex / cardsPerRow);
-      const col = pageIndex % cardsPerRow;
-
-      const x = margin + col * (cardWidth + xSpacing);
-      const y = margin + row * (cardHeight + ySpacing);
-
-      // Card border
-      doc.setDrawColor(200);
-      doc.rect(x, y, cardWidth, cardHeight);
-
-      // Header
-      doc.setFillColor(30, 64, 175);
-      doc.rect(x, y, cardWidth, 12, 'F');
-      doc.setTextColor(255);
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.text("KARTU LOGIN SISWA", x + cardWidth / 2, y + 5, { align: "center" });
-      doc.setFontSize(7);
-      doc.text("SMP NEGERI 2 MAGELANG", x + cardWidth / 2, y + 9, { align: "center" });
-
-      // Content
-      doc.setTextColor(0);
-      doc.setFontSize(9);
-      doc.text(`Nama : ${s.name}`, x + 5, y + 20);
-      doc.text(`Kelas : ${s.className}`, x + 5, y + 25);
+      const pageWidth = 215.9;
+      const pageHeight = 355.6;
+      const cardsPerRow = 4;
+      const cardsPerCol = 4;
+      const cardsPerPage = 16;
       
-      doc.setDrawColor(230);
-      doc.line(x + 5, y + 28, x + cardWidth - 5, y + 28);
+      const marginX = 10;
+      const marginY = 10;
+      const cardWidth = (pageWidth - (marginX * 2)) / cardsPerRow;
+      const cardHeight = (pageHeight - (marginY * 2)) / cardsPerCol;
 
-      doc.setFontSize(8);
-      doc.text("Kredensial Login:", x + 5, y + 33);
-      doc.setFontSize(10);
-      doc.text(`Username (NIS): ${s.nis}`, x + 5, y + 39);
-      doc.text(`SANDI: ${s.parentPassword || '-'}`, x + 5, y + 45);
-      
-      doc.setFontSize(7);
-      doc.setTextColor(100);
-      doc.text("Situs: absensi-smpn2magelang.web.app", x + 5, y + 51);
-    });
+      for (let i = 0; i < classSds.length; i++) {
+        if (i > 0 && i % cardsPerPage === 0) {
+          doc.addPage();
+        }
+        
+        const student = classSds[i];
+        const pageIdx = i % cardsPerPage;
+        const col = pageIdx % cardsPerRow;
+        const row = Math.floor(pageIdx / cardsPerRow);
+        
+        const x = marginX + (col * cardWidth);
+        const y = marginY + (row * cardHeight);
 
-    doc.save(`Kartu_Login_Kelas_${selectedClass}.pdf`);
+        const padding = 2;
+        const innerX = x + padding;
+        const innerY = y + padding;
+        const innerW = cardWidth - (padding * 2);
+        const innerH = cardHeight - (padding * 2);
+
+        // Card Border
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.1);
+        doc.roundedRect(innerX, innerY, innerW, innerH, 2, 2, 'S');
+
+        // Header
+        const headerColor = printType === 'ORTU' ? [251, 146, 60] : [30, 64, 175]; // orange-400 vs blue-700
+        doc.setFillColor(headerColor[0], headerColor[1], headerColor[2]);
+        doc.roundedRect(innerX, innerY, innerW, 8, 2, 2, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text(printType === 'ORTU' ? "KARTU ORANG TUA" : "KARTU LOGIN SISWA", innerX + (innerW / 2), innerY + 5, { align: 'center' });
+
+        const qrCodeValue = student.nis || '';
+        const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+        if (qrCodeDataUrl) {
+            const qrSize = Math.min(innerW * 0.75, innerH * 0.45);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeDataUrl, 'PNG', qrX, innerY + 12, qrSize, qrSize);
+        }
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("NAMA SISWA", innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(7);
+        doc.text((student.name || '').toUpperCase(), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center', maxWidth: innerW - 4 });
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("KELAS", innerX + (innerW / 2), innerY + innerH - 4, { align: 'center' });
+        
+        doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
+        doc.setFontSize(7);
+        doc.text(student.className || '-', innerX + (innerW / 2), innerY + innerH - 1, { align: 'center' });
+      }
+
+      doc.save(`KARTU_${printType}_KELAS_${selectedClass}.pdf`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal membuat PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
   };
 
   const fetchData = async () => {
-    if (!auth.currentUser) {
-      console.warn("Attempted to fetch data but not authenticated");
-      return;
-    }
     setLoading(true);
     try {
-      const [stdSnap, teaSnap, attSnap, yearSnap, counsSnap, classSnap, subAttSnap, inqSnap, schoolSnap] = await Promise.all([
-        getDocs(collection(db, 'students')),
-        getDocs(collection(db, 'teachers')),
-        getDocs(query(collection(db, 'attendance'), orderBy('submittedAt', 'desc'))),
-        getDocs(collection(db, 'academicYears')),
-        getDocs(collection(db, 'counselors')),
-        getDocs(collection(db, 'classes')),
-        getDocs(query(collection(db, 'subjectAttendance'), orderBy('createdAt', 'desc'))),
-        getDocs(collection(db, 'subjectInquiries')),
-        getDocs(collection(db, 'schoolData'))
+      const [stdSnap, teaSnap, attSnap, yearSnap, counsSnap, classSnap, subAttSnap, inqSnap, schoolSnap, presenceSnap, configSnap] = await Promise.all([
+        getDocs(collection(db, 'students')).catch(err => { console.error("Students fetch failed", err); return { docs: [] } as any; }),
+        getDocs(collection(db, 'teachers')).catch(err => { console.error("Teachers fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(collection(db, 'attendance'), orderBy('submittedAt', 'desc'))).catch(async err => {
+          console.warn("Attendance orderBy failed, falling back to simple fetch:", err);
+          return getDocs(collection(db, 'attendance'));
+        }),
+        getDocs(collection(db, 'academicYears')).catch(err => { console.error("Years fetch failed", err); return { docs: [] } as any; }),
+        getDocs(collection(db, 'counselors')).catch(err => { console.error("Counselors fetch failed", err); return { docs: [] } as any; }),
+        getDocs(collection(db, 'classes')).catch(err => { console.error("Classes fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(collection(db, 'subjectAttendance'), orderBy('createdAt', 'desc'))).catch(async err => {
+          console.warn("SubAtt orderBy failed, falling back:", err);
+          return getDocs(collection(db, 'subjectAttendance'));
+        }),
+        getDocs(query(collection(db, 'subjectInquiries'), orderBy('createdAt', 'desc'))).catch(async err => {
+          console.warn("Inquiries orderBy failed:", err);
+          return getDocs(collection(db, 'subjectInquiries'));
+        }),
+        getDocs(collection(db, 'schoolData')).catch(err => { console.error("SchoolData fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(collection(db, 'schoolPresence'), where('timestamp', '>=', Timestamp.fromDate(new Date(new Date().setHours(0,0,0,0)))))).catch(async err => {
+          console.warn("Presence query failed:", err);
+          return { docs: [] } as any;
+        }),
+        getDoc(doc(db, 'schoolConfig', 'main')).catch(err => { console.error("Config fetch failed", err); return { exists: () => false } as any; })
       ]);
 
+      setPresenceRecords(presenceSnap.docs.map(d => ({ ...d.data(), id: d.id })));
+      if (configSnap.exists()) {
+        setPresenceConfig(configSnap.data() as any);
+      }
+
       setStudents(stdSnap.docs.map(d => ({ ...d.data(), id: d.id } as Student)));
-      setTeachers(teaSnap.docs.map(d => ({ ...d.data(), id: d.id } as Teacher)));
+      setTeachers(teaSnap.docs.map(d => {
+        const data = d.data() as any;
+        if (typeof data.status === 'string') {
+          data.status = [data.status];
+        }
+        return { ...data, id: d.id } as Teacher;
+      }));
       const newAttendance = attSnap.docs.map(d => {
         const data = d.data();
         return { ...data, id: d.id } as AttendanceRecord;
       });
       setAttendance(newAttendance);
 
-      // Check alerts
-      const studentsData = stdSnap.docs.map(d => ({...d.data(), id: d.id} as Student));
-      for (const s of studentsData) {
-        await checkAttendanceAlert(s.id, s.name, s.className, newAttendance, 3, 10);
-      }
+      // We remove the slow serial alert checking loop from the initial load. 
+      // Alerts are already calculated when attendance status changes.
+      
       setSubjectAttendances(subAttSnap.docs.map(d => ({ ...d.data(), id: d.id })));
       setSubjectInquiries(inqSnap.docs.map(d => ({ ...d.data(), id: d.id })));
       setAcademicYears(yearSnap.docs.map(d => ({ ...d.data(), id: d.id } as AcademicYear)));
@@ -444,6 +716,7 @@ export default function AdminDashboard() {
       setCounselors(counsSnap.docs.map(d => ({ ...d.data(), id: d.id })));
       setClasses(classSnap.docs.map(d => ({ ...d.data(), id: d.id })));
     } catch (err: any) {
+      console.error("Firestore fetch error:", err);
       handleFirestoreError(err, 'list', 'Admin initial data fetch');
     } finally {
       setLoading(false);
@@ -504,10 +777,6 @@ export default function AdminDashboard() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser) {
-      alert("Sesi keamanan Firebase belum siap. Silakan tunggu sebentar atau muat ulang halaman.");
-      return;
-    }
     setLoading(true);
     try {
       const colName = 
@@ -549,7 +818,7 @@ export default function AdminDashboard() {
           ...payload,
           subjects: formData.subjects ? (Array.isArray(formData.subjects) ? formData.subjects : formData.subjects.split(',').map((s: string) => s.trim())) : [],
           taughtClasses: formData.taughtClasses ? (Array.isArray(formData.taughtClasses) ? formData.taughtClasses : formData.taughtClasses.split(',').map((s: string) => s.trim())) : [],
-          status: Array.isArray(formData.status) ? (formData.status.includes('Guru Mata Pelajaran') ? formData.status : [...formData.status, 'Guru Mata Pelajaran']) : ['Guru Mata Pelajaran']
+          status: Array.isArray(formData.status) ? (formData.status.includes('Guru Mapel') ? formData.status : [...formData.status, 'Guru Mapel']) : ['Guru Mapel']
         };
       }
       if (activeTab === 'role-management-guru' || activeTab === 'role-management-petugas') {
@@ -573,6 +842,25 @@ export default function AdminDashboard() {
         const { id, isChangingRole, ...dataToUpdate } = payload;
         Object.keys(dataToUpdate).forEach(key => dataToUpdate[key] === undefined && delete dataToUpdate[key]);
         await updateDoc(doc(db, 'teachers', id), dataToUpdate);
+
+        // SYNC: If Wali Kelas, update the classes collection
+        if (dataToUpdate.status?.includes('Wali Kelas') && dataToUpdate.className) {
+          const targetClass = classes.find(c => c.name === dataToUpdate.className);
+          if (targetClass) {
+            await updateDoc(doc(db, 'classes', targetClass.id), { waliKelasId: id });
+          }
+          // Optional: Clear other classes that might have this teacher as wali
+          const otherClasses = classes.filter(c => c.waliKelasId === id && c.name !== dataToUpdate.className);
+          for (const oc of otherClasses) {
+            await updateDoc(doc(db, 'classes', oc.id), { waliKelasId: null });
+          }
+        } else if (!dataToUpdate.status?.includes('Wali Kelas')) {
+           // If no longer wali kelas, clear from classes collection
+           const myClasses = classes.filter(c => c.waliKelasId === id);
+           for (const mc of myClasses) {
+             await updateDoc(doc(db, 'classes', mc.id), { waliKelasId: null });
+           }
+        }
       } else if (formData.id) {
         // Update existing
         const { id, ...dataToUpdate } = payload;
@@ -668,6 +956,10 @@ export default function AdminDashboard() {
       setWaText('');
       setParsedWAData(null);
       fetchData();
+      
+      // Early Warning Check
+      checkAttendanceAlert(payload.studentId, payload.studentName, payload.className).catch(console.error);
+      
       alert(`Berhasil mengimpor data absensi untuk ${payload.studentName}!`);
     } catch (err: any) {
       handleFirestoreError(err, 'create', 'WhatsApp Import');
@@ -678,7 +970,6 @@ export default function AdminDashboard() {
   const today = new Date().toISOString().split('T')[0];
   const stats = {
     totalStudents: students.length,
-    activeAttendance: attendance.filter(a => a.status === 'Pending').length,
     sakit: attendance.filter(a => a.type === 'Sakit').length,
     izin: attendance.filter(a => a.type === 'Izin').length,
     dispensasi: attendance.filter(a => a.type === 'Dispensasi').length,
@@ -686,6 +977,8 @@ export default function AdminDashboard() {
     todayIzin: attendance.filter(a => a.type === 'Izin' && a.date === today).length,
     todayDispensasi: attendance.filter(a => a.type === 'Dispensasi' && a.date === today).length,
     todayAlpa: attendance.filter(a => a.type === 'Alpa' && a.date === today).length + subjectAttendances.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length,
+    todayOnTime: presenceRecords.filter(p => p.type === 'arrival' && (p.status === 'Tepat Waktu' || p.status === 'Hadir')).length,
+    todayLate: presenceRecords.filter(p => p.type === 'arrival' && p.status === 'Terlambat').length,
   };
 
   const todayAttendanceByClass = useMemo(() => {
@@ -725,12 +1018,33 @@ export default function AdminDashboard() {
     }
 
     try {
+      // Find the attendance record to get studentId
+      const record = attendance.find(a => a.id === id);
+      if (record) {
+        await addDoc(collection(db, 'notifications'), {
+          studentId: record.studentId,
+          targetRole: 'PARENT',
+          title: newStatus === 'Approved' ? '✅ Izin Disetujui (Admin)' : '❌ Izin Ditolak (Admin)',
+          message: newStatus === 'Approved' 
+            ? 'Pengajuan izin Anda telah disetujui dan diverifikasi oleh Admin.' 
+            : `Pengajuan izin Anda ditolak oleh Admin. Alasan: ${reason}`,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+
       await updateDoc(doc(db, 'attendance', id), { 
         status: newStatus,
         statusReason: reason,
         processedAt: serverTimestamp(),
         processedBy: user?.name || 'Admin'
       });
+      
+      // Early Warning Check on Approval
+      if (newStatus === 'Approved' && record) {
+        checkAttendanceAlert(record.studentId, record.studentName, record.className).catch(console.error);
+      }
+      
       fetchData();
     } catch (error) {
       console.error(error);
@@ -838,6 +1152,23 @@ export default function AdminDashboard() {
     );
   };
 
+  const toggleOfficerSelection = (id: string) => {
+    setSelectedOfficers(prev => 
+      prev.includes(id) ? prev.filter(o => o !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAllOfficers = (listToSelect?: string[]) => {
+    const ids = listToSelect || students.filter(s => s.role === 'STUDENT').map(s => s.id!);
+    const allSelected = ids.length > 0 && ids.every(id => selectedOfficers.includes(id));
+    
+    if (allSelected) {
+      setSelectedOfficers(prev => prev.filter(id => !ids.includes(id)));
+    } else {
+      setSelectedOfficers(prev => Array.from(new Set([...prev, ...ids])));
+    }
+  };
+
   const toggleAllTeachers = (listToSelect?: string[]) => {
     const ids = listToSelect || teachers.map(t => t.id!);
     const allSelected = ids.length > 0 && ids.every(id => selectedTeachers.includes(id));
@@ -855,7 +1186,7 @@ export default function AdminDashboard() {
       'Kelas': a.className,
       'Jenis Izin': a.type,
       'Tanggal': a.date,
-      'Status': a.status,
+      'Status': 'DITERIMA',
       'Email/No. WA Ortu': a.parentPhone || '-',
       'Alasan': a.reason || '-'
     }));
@@ -883,9 +1214,9 @@ export default function AdminDashboard() {
         weeks[key] = { week: weekNum, year: date.getFullYear(), sakit: 0, izin: 0, dispensasi: 0 };
       }
       
-      if (record.status === 'SAKIT') weeks[key].sakit++;
-      else if (record.status === 'IZIN') weeks[key].izin++;
-      else if (record.status === 'DISPENSASI') weeks[key].dispensasi++;
+      if (record.type === 'Sakit') weeks[key].sakit++;
+      else if (record.type === 'Izin') weeks[key].izin++;
+      else if (record.type === 'Dispensasi') weeks[key].dispensasi++;
     });
     
     return Object.values(weeks).sort((a, b) => b.year - a.year || b.week - a.week);
@@ -917,7 +1248,7 @@ export default function AdminDashboard() {
       a.parentPhone || '-',
       a.type,
       a.date,
-      a.status
+      'DITERIMA'
     ]);
 
     autoTable(doc, {
@@ -1023,15 +1354,771 @@ export default function AdminDashboard() {
     try {
       return await QRCode.toDataURL(text, {
         margin: 1,
-        width: 100,
+        width: 256,
         color: {
-          dark: '#1e40af', // blue-800
-          light: '#ffffff'
+          dark: '#000000',
+          light: '#ffffff',
         }
       });
     } catch (err) {
       console.error(err);
       return '';
+    }
+  };
+
+  const QRThumbnail = ({ value }: { value: string }) => {
+    const [dataUrl, setDataUrl] = useState<string>('');
+
+    useEffect(() => {
+      if (!value) return;
+      QRCode.toDataURL(value, { margin: 1, width: 64 })
+        .then(url => setDataUrl(url))
+        .catch(err => console.error(err));
+    }, [value]);
+
+    if (!dataUrl) return <span className="text-[10px] text-gray-300 italic">No Data</span>;
+
+    return (
+      <img 
+        src={dataUrl} 
+        alt="QR Code" 
+        className="h-8 w-8 object-contain border border-gray-100 rounded bg-white p-0.5 mx-auto" 
+        title={value}
+      />
+    );
+  };
+
+  const printTeacherIDCard = async (teacher: any) => {
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: [85.6, 54] // Standard ID Card size
+    });
+
+    // Background color
+    doc.setFillColor(30, 64, 175); // blue-700
+    doc.rect(0, 0, 85.6, 12, 'F');
+
+    // Header
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text("KARTU TANDA ANGGOTA GURU", 42.8, 5, { align: 'center' });
+    doc.setFontSize(6);
+    doc.text("SMP NEGERI 2 MAGELANG", 42.8, 8, { align: 'center' });
+
+    // Main Content
+    doc.setTextColor(30, 64, 175);
+    doc.setFontSize(8);
+    doc.text("Nama:", 10, 20);
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(9);
+    doc.text(teacher.name || '-', 10, 24);
+
+    doc.setTextColor(30, 64, 175);
+    doc.setFontSize(8);
+    doc.text("NIP:", 10, 30);
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(9);
+    doc.text(teacher.nip || '-', 10, 34);
+
+    doc.setTextColor(30, 64, 175);
+    doc.setFontSize(8);
+    doc.text("Status:", 10, 40);
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(9);
+    doc.text(Array.isArray(teacher.status) ? teacher.status.join('/') : (teacher.status || '-'), 10, 44);
+
+    // QR Code
+    const qrData = `${window.location.host}/login?role=TEACHER&nip=${teacher.nip}`;
+    const qrCodeBase64 = await generateQRCode(qrData);
+    if (qrCodeBase64) {
+      doc.addImage(qrCodeBase64, 'PNG', 55, 18, 25, 25);
+      doc.setFontSize(5);
+      doc.setTextColor(150, 150, 150);
+      doc.text("Scan untuk Login", 67.5, 45, { align: 'center' });
+    }
+
+    // Footer
+    doc.setFillColor(241, 245, 249); // gray-100
+    doc.rect(0, 49, 85.6, 5, 'F');
+    doc.setFontSize(5);
+    doc.setTextColor(100, 116, 139); // gray-500
+    doc.text("SIADPV - Sistem Informasi Absensi Peserta Didik", 42.8, 52.5, { align: 'center' });
+
+    doc.save(`KTA_GURU_${teacher.nip}_${teacher.name}.pdf`);
+  };
+
+  const printLoginCard = async (entity: any, type: 'GURU' | 'ORTU' | 'PETUGAS') => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [54, 85.6]
+    });
+
+    const pageWidth = 54;
+    const pageHeight = 85.6;
+    
+    let qrCodeValue = '';
+    let title = '';
+    let name = entity.name || '-';
+    let subInfo = '';
+    let subTitle = '';
+
+    if (type === 'GURU') {
+      title = 'KARTU LOGIN GURU';
+      qrCodeValue = entity.nip || '';
+      subInfo = `NIP: ${qrCodeValue}`;
+    } else if (type === 'ORTU') {
+      title = 'KARTU LOGIN (ORTU)';
+      qrCodeValue = entity.nis || '';
+      subInfo = `NIS: ${qrCodeValue} | Kelas: ${entity.className}`;
+    } else {
+      title = 'PETUGAS ABSENSI KELAS';
+      subTitle = 'KARTU LOGIN ANGGOTA';
+      // For officers, USER ID is className + padded absensiNo
+      qrCodeValue = `${entity.className}${String(entity.absensiNo || '').padStart(2, '0')}`;
+      subInfo = `KELAS: ${entity.className}`;
+    }
+
+    if (type === 'PETUGAS') {
+        // Professional Design for Officer Name Tag
+        // Border Blue
+        doc.setDrawColor(30, 64, 175);
+        doc.setLineWidth(0.5);
+        doc.rect(1, 1, pageWidth - 2, pageHeight - 2);
+
+        // Header Section
+        doc.setFillColor(30, 64, 175);
+        doc.rect(1, 1, pageWidth - 2, 18, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, pageWidth / 2, 8, { align: 'center' });
+        doc.setFontSize(6);
+        doc.text(subTitle, pageWidth / 2, 13, { align: 'center' });
+
+        // QR Code Section (50% area)
+        if (qrCodeValue) {
+            const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+            if (qrCodeDataUrl) {
+                const qrSize = 48; // Large QR (approx 50% area of 54x85.6)
+                const xPos = (pageWidth - qrSize) / 2;
+                doc.addImage(qrCodeDataUrl, 'PNG', xPos, 19, qrSize, qrSize);
+            }
+        }
+
+        // Student Info
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text("NAMA SISWA:", pageWidth / 2, 69, { align: 'center' });
+        doc.setFontSize(9);
+        doc.text(name.toUpperCase(), pageWidth / 2, 73, { align: 'center', maxWidth: pageWidth - 10 });
+        
+        doc.setFontSize(6);
+        doc.text("KELAS:", pageWidth / 2, 78, { align: 'center' });
+        doc.setFontSize(8);
+        doc.setTextColor(30, 64, 175);
+        doc.text(entity.className || '-', pageWidth / 2, 82, { align: 'center' });
+
+        // Branding (Small)
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(4);
+        doc.text("SCAN QR UNTUK LOGIN", pageWidth / 2, 66, { align: 'center' });
+    } else {
+        // Default design for others
+        doc.setDrawColor(30, 64, 175);
+        doc.setLineWidth(0.5);
+        doc.rect(1, 1, pageWidth - 2, pageHeight - 2);
+
+        doc.setFillColor(30, 64, 175);
+        doc.rect(1, 1, pageWidth - 2, 10, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, pageWidth / 2, 7, { align: 'center' });
+
+        if (qrCodeValue) {
+          const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+          if (qrCodeDataUrl) {
+             const qrSize = 34;
+             const xPos = (pageWidth - qrSize) / 2;
+             doc.addImage(qrCodeDataUrl, 'PNG', xPos, 16, qrSize, qrSize);
+          }
+        }
+
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text("PENGGUNA:", pageWidth / 2, 55, { align: 'center' });
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text(name, pageWidth / 2, 62, { align: 'center', maxWidth: pageWidth - 8 });
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 64, 175);
+        doc.text(subInfo, pageWidth / 2, 70, { align: 'center' });
+
+        doc.setFillColor(241, 245, 249);
+        doc.rect(1, pageHeight - 9, pageWidth - 2, 8, 'F');
+        doc.setTextColor(100, 116, 139);
+        doc.setFontSize(5);
+        doc.text("SIADPV - SISTEM ABSENSI DIGITAL", pageWidth / 2, pageHeight - 5.5, { align: 'center' });
+        doc.setFontSize(4);
+        doc.text("SMP NEGERI 2 MAGELANG", pageWidth / 2, pageHeight - 3.5, { align: 'center' });
+    }
+
+    doc.save(`KARTU_LOGIN_${type}_${qrCodeValue}.pdf`);
+  };
+
+  const printSelectedTeacherLoginCards = async () => {
+    if (selectedTeachers.length === 0) {
+      alert('Pilih guru terlebih dahulu.');
+      return;
+    }
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan kartu login guru (Legal Paper)...');
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'legal'
+      });
+
+      const pageWidth = 215.9;
+      const pageHeight = 355.6;
+      const teachersToPrint = teachers.filter(t => selectedTeachers.includes(t.id || ''));
+      
+      const cardsPerRow = 4;
+      const cardsPerCol = 4;
+      const cardsPerPage = 16;
+      
+      const marginX = 10;
+      const marginY = 10;
+      const cardWidth = (pageWidth - (marginX * 2)) / cardsPerRow;
+      const cardHeight = (pageHeight - (marginY * 2)) / cardsPerCol;
+
+      for (let i = 0; i < teachersToPrint.length; i++) {
+        if (i > 0 && i % cardsPerPage === 0) {
+          doc.addPage();
+        }
+
+        const teacher = teachersToPrint[i];
+        const pageIdx = i % cardsPerPage;
+        const col = pageIdx % cardsPerRow;
+        const row = Math.floor(pageIdx / cardsPerRow);
+        
+        const x = marginX + (col * cardWidth);
+        const y = marginY + (row * cardHeight);
+
+        const padding = 2;
+        const innerX = x + padding;
+        const innerY = y + padding;
+        const innerW = cardWidth - (padding * 2);
+        const innerH = cardHeight - (padding * 2);
+
+        // Card Border
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.1);
+        doc.roundedRect(innerX, innerY, innerW, innerH, 2, 2, 'S');
+
+        // Header Blue
+        doc.setFillColor(30, 64, 175);
+        doc.roundedRect(innerX, innerY, innerW, 8, 2, 2, 'F');
+        
+        // Header Text
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text("KARTU LOGIN GURU", innerX + (innerW / 2), innerY + 5, { align: 'center' });
+
+        const qrCodeValue = teacher.nip || '';
+        const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+        if (qrCodeDataUrl) {
+            const qrSize = Math.min(innerW * 0.75, innerH * 0.45);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeDataUrl, 'PNG', qrX, innerY + 12, qrSize, qrSize);
+        }
+
+        // Info Section
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("NAMA GURU", innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(7);
+        doc.text((teacher.name || '').toUpperCase(), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center', maxWidth: innerW - 4 });
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("IDENTITAS (NIP)", innerX + (innerW / 2), innerY + innerH - 4, { align: 'center' });
+        
+        doc.setTextColor(30, 64, 175);
+        doc.setFontSize(7);
+        doc.text(teacher.nip || '-', innerX + (innerW / 2), innerY + innerH - 1, { align: 'center' });
+      }
+
+      doc.save(`KARTU_MASAL_GURU_${new Date().getTime()}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal membuat PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const printSelectedOfficerLoginCards = async () => {
+    if (selectedOfficers.length === 0) {
+      alert('Pilih petugas terlebih dahulu.');
+      return;
+    }
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan kartu login masal (Legal Paper)...');
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'legal'
+      });
+
+      const pageWidth = 215.9;
+      const pageHeight = 355.6;
+      const officersToPrint = students.filter(s => selectedOfficers.includes(s.id || ''));
+      
+      const cardsPerRow = 4;
+      const cardsPerCol = 4;
+      const cardsPerPage = cardsPerRow * cardsPerCol;
+      
+      const marginX = 10;
+      const marginY = 10;
+      const cardWidth = (pageWidth - (marginX * 2)) / cardsPerRow;
+      const cardHeight = (pageHeight - (marginY * 2)) / cardsPerCol;
+
+      for (let i = 0; i < officersToPrint.length; i++) {
+        if (i > 0 && i % cardsPerPage === 0) {
+          doc.addPage();
+        }
+
+        const officer = officersToPrint[i];
+        const pageIdx = i % cardsPerPage;
+        const col = pageIdx % cardsPerRow;
+        const row = Math.floor(pageIdx / cardsPerRow);
+        
+        const x = marginX + (col * cardWidth);
+        const y = marginY + (row * cardHeight);
+
+        // Padding inside grid cell
+        const padding = 2;
+        const innerX = x + padding;
+        const innerY = y + padding;
+        const innerW = cardWidth - (padding * 2);
+        const innerH = cardHeight - (padding * 2);
+
+        // Card Border
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.1);
+        doc.roundedRect(innerX, innerY, innerW, innerH, 2, 2, 'S');
+
+        // Header Blue
+        doc.setFillColor(30, 64, 175);
+        doc.roundedRect(innerX, innerY, innerW, 8, 2, 2, 'F');
+        
+        // Header Text
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text("KARTU PETUGAS", innerX + (innerW / 2), innerY + 5, { align: 'center' });
+
+        // QR Code Section (approx 50% height)
+        const qrCodeValue = `${officer.className}${String(officer.absensiNo || '').padStart(2, '0')}`;
+        const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+        if (qrCodeDataUrl) {
+            const qrSize = Math.min(innerW * 0.8, innerH * 0.45);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeDataUrl, 'PNG', qrX, innerY + 12, qrSize, qrSize);
+        }
+
+        // Info Section
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("NAMA SISWA", innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(7);
+        doc.text((officer.name || '').toUpperCase(), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center', maxWidth: innerW - 4 });
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("KELAS", innerX + (innerW / 2), innerY + innerH - 4, { align: 'center' });
+        
+        doc.setTextColor(30, 64, 175);
+        doc.setFontSize(7);
+        doc.text(officer.className || '-', innerX + (innerW / 2), innerY + innerH - 1, { align: 'center' });
+      }
+
+      doc.save(`KARTU_MASAL_PETUGAS_${new Date().getTime()}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal membuat PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const printBulkCards = async (type: 'SISWA' | 'ORTU' | 'GURU' | 'PETUGAS' | 'APPLINK') => {
+    setLoading(true);
+    setStatusMessage(`Sedang menyiapkan pencetakan kartu ${type.replace('_', ' ')}...`);
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'legal'
+      });
+
+      const pageWidth = 215.9;
+      const pageHeight = 355.6;
+      const cardsPerRow = 4;
+      const cardsPerCol = 4;
+      const cardsPerPage = 16;
+      
+      const marginX = 10;
+      const marginY = 10;
+      const cardWidth = (pageWidth - (marginX * 2)) / cardsPerRow;
+      const cardHeight = (pageHeight - (marginY * 2)) / cardsPerCol;
+
+      let items: any[] = [];
+      let title = "";
+      let appUrl = window.location.origin;
+
+      if (type === 'SISWA' || type === 'ORTU') {
+        items = [...students].sort((a,b) => (a.className || '').localeCompare(b.className || '', undefined, {numeric: true}) || (a.name || '').localeCompare(b.name || ''));
+        title = type === 'SISWA' ? "KARTU LOGIN SISWA" : "KARTU LOGIN ORANG TUA";
+      } else if (type === 'GURU') {
+        items = [...teachers].sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+        title = "KARTU LOGIN GURU";
+      } else if (type === 'PETUGAS') {
+        items = allOfficers;
+        title = "KARTU LOGIN PETUGAS";
+      } else if (type === 'APPLINK') {
+        items = Array(16).fill({ isLink: true });
+        title = "AKSES APLIKASI";
+      }
+
+      const qrCodeAppLink = await generateQRCode(appUrl);
+
+      for (let i = 0; i < items.length; i++) {
+        if (i > 0 && i % cardsPerPage === 0) doc.addPage();
+        
+        const item = items[i];
+        const pageIdx = i % cardsPerPage;
+        const col = pageIdx % cardsPerRow;
+        const row = Math.floor(pageIdx / cardsPerRow);
+        
+        const x = marginX + (col * cardWidth);
+        const y = marginY + (row * cardHeight);
+
+        const padding = 2;
+        const innerX = x + padding;
+        const innerY = y + padding;
+        const innerW = cardWidth - (padding * 2);
+        const innerH = cardHeight - (padding * 2);
+
+        // Card Border
+        let borderColor = [200, 200, 200];
+        let headerColor = [30, 64, 175]; // Blue 700
+
+        if (type === 'ORTU') headerColor = [249, 115, 22]; // Orange 500
+        if (type === 'GURU') headerColor = [37, 99, 235]; // Blue 600
+        if (type === 'PETUGAS') headerColor = [16, 185, 129]; // Emerald 500
+        if (type === 'APPLINK') {
+          headerColor = [220, 38, 38]; // Red 600
+          borderColor = [220, 38, 38];
+        }
+
+        doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+        doc.setLineWidth(0.1);
+        doc.roundedRect(innerX, innerY, innerW, innerH, 2, 2, 'S');
+
+        // Header
+        doc.setFillColor(headerColor[0], headerColor[1], headerColor[2]);
+        doc.roundedRect(innerX, innerY, innerW, 8, 2, 2, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, innerX + (innerW / 2), innerY + 5.5, { align: 'center' });
+
+        // Content
+        if (type === 'APPLINK') {
+          if (qrCodeAppLink) {
+            const qrSize = Math.min(innerW * 0.75, innerH * 0.5);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeAppLink, 'PNG', qrX, innerY + 14, qrSize, qrSize);
+          }
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(6);
+          doc.text("PINDAI UNTUK AKSES", innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+          doc.setTextColor(100, 100, 100);
+          doc.setFontSize(4);
+          doc.text(appUrl.replace(/https?:\/\//, ''), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center' });
+          doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
+          doc.setFontSize(6);
+          doc.text(schoolInfo?.schoolName || "SMPN 2 MAGELANG", innerX + (innerW / 2), innerY + innerH - 3, { align: 'center' });
+        } else {
+          const qrCodeValue = type === 'GURU' ? item.email : item.nis;
+          const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+          if (qrCodeDataUrl) {
+            const qrSize = Math.min(innerW * 0.7, innerH * 0.4);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeDataUrl, 'PNG', qrX, innerY + 12, qrSize, qrSize);
+          }
+          
+          doc.setTextColor(150, 150, 150);
+          doc.setFontSize(4);
+          doc.text("NAMA " + (type === 'GURU' ? 'GURU' : 'SISWA'), innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(6);
+          doc.setFont('helvetica', 'bold');
+          doc.text((item.name || '').toUpperCase(), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center', maxWidth: innerW - 4 });
+
+          doc.setTextColor(150, 150, 150);
+          doc.setFontSize(4);
+          doc.setFont('helvetica', 'normal');
+          doc.text(type === 'GURU' ? "USER (NIP/EMAIL)" : "USER (NIS/NIK)", innerX + (innerW / 2), innerY + innerH - 4, { align: 'center' });
+          doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
+          doc.setFontSize(6);
+          doc.text(String(type === 'GURU' ? (item.nip || item.email) : item.nis), innerX + (innerW / 2), innerY + innerH - 1, { align: 'center' });
+        }
+      }
+
+      doc.save(`KARTU_MASAL_${type}_${formatDate(new Date()).replace(/ /g, '_')}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal membuat PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const backupData = async () => {
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan pencadangan data sistem...');
+    try {
+      const collections = [
+        'students', 
+        'teachers', 
+        'classes', 
+        'academic_years', 
+        'attendance', 
+        'subject_attendance', 
+        'presence', 
+        'counselors', 
+        'attendance_officers', 
+        'school_info',
+        'notifications',
+        'subject_inquiries',
+        'grades'
+      ];
+
+      const backup: any = {
+        version: '1.0',
+        timestamp: new Date().toISOString(),
+        schoolName: schoolInfo?.schoolName || 'SIADPV',
+        data: {}
+      };
+
+      for (const collName of collections) {
+        const snapshot = await getDocs(collection(db, collName));
+        backup.data[collName] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      }
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `BACKUP_DATA_${backup.schoolName.replace(/ /g, '_').toUpperCase()}_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+      alert('Pencadangan data berhasil! File telah diunduh ke penyimpanan lokal Anda.');
+    } catch (err: any) {
+      console.error('Backup error:', err);
+      alert('Gagal melakukan pencadangan data: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const restoreData = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm('PERINGATAN: Restorasi akan menimpa data yang ada saat ini dengan data dari file backup. Apakah Anda yakin ingin melanjutkan?')) {
+      return;
+    }
+
+    setLoading(true);
+    setStatusMessage('Sedang memproses restorasi data...');
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const content = e.target?.result as string;
+          const backup = JSON.parse(content);
+          
+          if (!backup.data) throw new Error('Format file tidak valid.');
+
+          let batch = writeBatch(db);
+          let ops = 0;
+
+          for (const [collName, items] of Object.entries(backup.data)) {
+            for (const item of (items as any[])) {
+              batch.set(doc(db, collName, item.id), item);
+              ops++;
+              
+              if (ops === 450) { 
+                await batch.commit();
+                batch = writeBatch(db);
+                ops = 0;
+              }
+            }
+          }
+          if (ops > 0) await batch.commit();
+
+          setSuccess(true);
+          setTimeout(() => setSuccess(false), 3000);
+          alert('Restorasi data berhasil! Aplikasi akan memuat ulang.');
+          window.location.reload();
+        } catch (err: any) {
+            console.error('Restore error:', err);
+            alert('Gagal melakukan restorasi data: ' + err.message);
+            setLoading(false);
+            setStatusMessage('');
+        }
+      }
+      reader.readAsText(file);
+    } catch (err: any) {
+        console.error('File read error:', err);
+        setLoading(false);
+        setStatusMessage('');
+        alert('Gagal membaca file: ' + err.message);
+    }
+  };
+
+  const printSelectedLoginCards = async (printType: 'SISWA' | 'ORTU' = 'SISWA') => {
+    const listToPrint = students.filter(s => selectedStudents.includes(s.id));
+    if (listToPrint.length === 0) {
+      alert('Pilih siswa terlebih dahulu.');
+      return;
+    }
+    setLoading(true);
+    setStatusMessage(`Sedang menyiapkan kartu login ${printType === 'ORTU' ? 'orang tua' : 'siswa'} (Legal Paper)...`);
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'legal'
+      });
+
+      const pageWidth = 215.9;
+      const pageHeight = 355.6;
+      const cardsPerRow = 4;
+      const cardsPerCol = 4;
+      const cardsPerPage = 16;
+      
+      const marginX = 10;
+      const marginY = 10;
+      const cardWidth = (pageWidth - (marginX * 2)) / cardsPerRow;
+      const cardHeight = (pageHeight - (marginY * 2)) / cardsPerCol;
+
+      for (let i = 0; i < listToPrint.length; i++) {
+        if (i > 0 && i % cardsPerPage === 0) {
+          doc.addPage();
+        }
+
+        const student = listToPrint[i];
+        const pageIdx = i % cardsPerPage;
+        const col = pageIdx % cardsPerRow;
+        const row = Math.floor(pageIdx / cardsPerRow);
+        
+        const x = marginX + (col * cardWidth);
+        const y = marginY + (row * cardHeight);
+
+        const padding = 2;
+        const innerX = x + padding;
+        const innerY = y + padding;
+        const innerW = cardWidth - (padding * 2);
+        const innerH = cardHeight - (padding * 2);
+
+        // Card Border
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.1);
+        doc.roundedRect(innerX, innerY, innerW, innerH, 2, 2, 'S');
+
+        // Header
+        const headerColor = printType === 'ORTU' ? [251, 146, 60] : [30, 64, 175];
+        doc.setFillColor(headerColor[0], headerColor[1], headerColor[2]);
+        doc.roundedRect(innerX, innerY, innerW, 8, 2, 2, 'F');
+        
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.text(printType === 'ORTU' ? "KARTU LOGIN ORTU" : "KARTU LOGIN SISWA", innerX + (innerW / 2), innerY + 5, { align: 'center' });
+
+        const qrCodeValue = student.nis || '';
+        const qrCodeDataUrl = await generateQRCode(qrCodeValue);
+        if (qrCodeDataUrl) {
+            const qrSize = Math.min(innerW * 0.75, innerH * 0.45);
+            const qrX = innerX + (innerW - qrSize) / 2;
+            doc.addImage(qrCodeDataUrl, 'PNG', qrX, innerY + 12, qrSize, qrSize);
+        }
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("NAMA SISWA", innerX + (innerW / 2), innerY + innerH - 12, { align: 'center' });
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(7);
+        doc.text((student.name || '').toUpperCase(), innerX + (innerW / 2), innerY + innerH - 8, { align: 'center', maxWidth: innerW - 4 });
+
+        doc.setTextColor(150, 150, 150);
+        doc.setFontSize(5);
+        doc.text("KELAS", innerX + (innerW / 2), innerY + innerH - 4, { align: 'center' });
+        
+        doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
+        doc.setFontSize(7);
+        doc.text(student.className || '-', innerX + (innerW / 2), innerY + innerH - 1, { align: 'center' });
+      }
+
+      doc.save(`KARTU_MASAL_${printType}_${new Date().getTime()}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal membuat PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
     }
   };
 
@@ -1179,62 +2266,6 @@ export default function AdminDashboard() {
     }
   };
 
-  const seedSampleData = async () => {
-    setLoading(true);
-    setStatusMessage('Sedang memproses populasi data sampel...');
-    
-    // Sample Teachers
-    const sampleTeachers = [
-      { name: 'Budi Santoso, S.Pd', nip: '19800101', className: '7A', status: ['Wali Kelas'] },
-      { name: 'Siti Aminah, M.Pd', nip: '19850202', className: '8B', status: ['Wali Kelas'] },
-      { name: 'Andi Wijaya, S.Kom', nip: '19900303', className: '9C', status: ['Wali Kelas'] },
-      { name: 'Hani Fitriani, S.Pd', nip: '19950404', status: ['Guru Mata Pelajaran'], subjects: ['Bahasa Inggris', 'Seni Budaya'], taughtClasses: ['7A', '7B', '8A'] }
-    ];
-
-    // Sample Counselors
-    const sampleCounselors = [
-      { name: 'Dr. Sarah Smith', nip: 'gurubk', managedClasses: ['7A', '7B', '8A', '8B'] }
-    ];
-    
-    // Sample Students
-    const sampleStudents = [
-      { name: 'Rizky Pratama', nis: '1001', nisn: '0012345678', className: '7A', gender: 'L' },
-      { name: 'Alya Putri', nis: '1002', nisn: '0012345679', className: '7A', gender: 'P' },
-      { name: 'Dimas Aditya', nis: '2001', nisn: '0022345678', className: '8B', gender: 'L' },
-      { name: 'Kirana Larasati', nis: '2002', nisn: '0022345679', className: '8B', gender: 'P' },
-      { name: 'Fajar Nugroho', nis: '3001', nisn: '0032345678', className: '9C', gender: 'L' }
-    ];
-
-    const sampleYears = [
-      { year: '2023/2024', active: true },
-      { year: '2024/2025', active: false }
-    ];
-
-    const sampleClasses = [
-      { name: '7A' }, { name: '7B' }, { name: '8A' }, { name: '8B' }, { name: '9C' }
-    ];
-
-    try {
-      const promises = [];
-      for (const t of sampleTeachers) promises.push(addDoc(collection(db, 'teachers'), t));
-      for (const s of sampleStudents) promises.push(addDoc(collection(db, 'students'), s));
-      for (const y of sampleYears) promises.push(addDoc(collection(db, 'academicYears'), y));
-      for (const c of sampleCounselors) promises.push(addDoc(collection(db, 'counselors'), c));
-      for (const cl of sampleClasses) promises.push(addDoc(collection(db, 'classes'), cl));
-      
-      await Promise.all(promises);
-      setStatusMessage('Data sampel berhasil dibuat!');
-      fetchData();
-      
-      // Clear message after 3 seconds
-      setTimeout(() => setStatusMessage(''), 3000);
-    } catch (err: any) {
-      console.error(err);
-      setStatusMessage(`Gagal: ${err.message || 'Terjadi kesalahan'}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const allUniqueClasses = useMemo(() => {
     const classMap = new Map<string, { id?: string, name: string }>();
@@ -1312,8 +2343,18 @@ export default function AdminDashboard() {
   const totalTeacherListPages = Math.ceil(filteredTeacherList.length / itemsPerPage);
 
   const filteredWaliKelas = useMemo(() => {
-    return teachers.filter(t => t.status?.includes('Wali Kelas')).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
-  }, [teachers]);
+    return teachers.filter(t => {
+      const isWaliKelasExplicit = t.status?.includes('Wali Kelas');
+      const isWaliKelasLinked = classes.some(c => c.waliKelasId === t.id || (t.className && c.name.toLowerCase().replace(/\s/g, '') === t.className.toLowerCase().replace(/\s/g, '')));
+      return isWaliKelasExplicit || isWaliKelasLinked;
+    }).map(t => {
+      if (!t.className) {
+        const assignedClass = classes.find(c => c.waliKelasId === t.id);
+        if (assignedClass) return { ...t, className: assignedClass.name };
+      }
+      return t;
+    }).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+  }, [teachers, classes]);
 
   const paginatedWaliKelas = useMemo(() => {
     const startIndex = (waliKelasPage - 1) * itemsPerPage;
@@ -1323,7 +2364,7 @@ export default function AdminDashboard() {
   const totalWaliKelasPages = Math.ceil(filteredWaliKelas.length / itemsPerPage);
 
   const filteredSubjectTeachers = useMemo(() => {
-    return teachers.filter(t => t.status?.includes('Guru Mata Pelajaran')).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+    return teachers.filter(t => t.status?.includes('Guru Mapel')).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
   }, [teachers]);
 
   const paginatedSubjectTeachers = useMemo(() => {
@@ -1362,9 +2403,7 @@ export default function AdminDashboard() {
       const matchesClass = !classFilter || inq.className === classFilter;
       return matchesSearch && matchesClass;
     }).sort((a, b) => {
-        const dateA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-        const dateB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-        return dateB - dateA;
+        return getTimeSafe(b.createdAt) - getTimeSafe(a.createdAt);
     });
   }, [subjectInquiries, searchTerm, classFilter]);
 
@@ -1437,6 +2476,12 @@ export default function AdminDashboard() {
 
   const totalAttendanceDetailPages = Math.ceil(filteredAttendance.length / itemsPerPage);
 
+  const pendingAttendance = useMemo(() => {
+    return (attendance as AttendanceRecord[]).filter(a => a.status === 'Pending').sort((a, b) => {
+        return getTimeSafe(b.submittedAt) - getTimeSafe(a.submittedAt);
+    });
+  }, [attendance]);
+
   const paginatedOfficers = useMemo(() => {
     const startIndex = (officerListPage - 1) * itemsPerPage;
     return allOfficers.slice(startIndex, startIndex + itemsPerPage);
@@ -1463,6 +2508,91 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-8">
+      <AnimatePresence>
+        {showNotifications && (
+          <>
+            <div className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[2px]" onClick={() => setShowNotifications(false)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="fixed top-24 right-6 z-50 w-80 bg-white border border-gray-100 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-sm font-black text-gray-900 uppercase tracking-tighter">Pemberitahuan Admin</h3>
+                <button 
+                  onClick={markAllNotificationsAsRead}
+                  className="text-[10px] font-bold text-blue-600 hover:text-blue-700 uppercase"
+                >
+                  Baca Semua
+                </button>
+              </div>
+              <div className="max-h-[400px] overflow-y-auto">
+                {adminNotifications.length === 0 ? (
+                  <div className="p-12 text-center text-gray-400">
+                    <Bell className="mx-auto mb-2 opacity-20" size={32} />
+                    <p className="text-[10px] font-bold uppercase tracking-widest">Tidak ada pemberitahuan</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-50">
+                    {adminNotifications.map((notif, i) => (
+                      <div 
+                        key={notif.id ? `admin-notif-${notif.id}-${i}` : `admin-notif-idx-${i}`} 
+                        className={cn(
+                          "p-4 transition-all hover:bg-gray-50 group",
+                          !notif.read ? "bg-blue-50/30" : ""
+                        )}
+                      >
+                        <div className="flex gap-3">
+                          <div className={cn(
+                            "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                            !notif.read 
+                              ? (notif.title?.includes('Izin') ? "bg-amber-500 text-white shadow-sm" : 
+                                 notif.title?.includes('Status') ? "bg-green-500 text-white shadow-sm" :
+                                 "bg-blue-500 text-white shadow-sm")
+                              : "bg-gray-100 text-gray-400"
+                          )}>
+                            {notif.title?.includes('Izin') ? <Calendar size={14} /> : 
+                             notif.title?.includes('Status') ? <CheckCircle2 size={14} /> :
+                             notif.title?.includes('Pesan') ? <MessageSquare size={14} /> :
+                             <Bell size={14} />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start mb-1">
+                              <h4 className="text-[11px] font-black text-gray-900 leading-none truncate uppercase">{notif.title || 'Informasi'}</h4>
+                              <span className="text-[8px] font-bold text-gray-400 whitespace-nowrap ml-2">
+                                {notif.createdAt ? formatDate(notif.createdAt) : '-'}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-gray-600 font-medium leading-tight mb-2">{notif.message}</p>
+                            <div className="flex items-center gap-2">
+                               {!notif.read && (
+                                 <button 
+                                   onClick={() => markNotificationAsRead(notif.id)}
+                                   className="text-[9px] font-bold text-blue-600 hover:underline uppercase"
+                                 >
+                                   Tandai Dibaca
+                                 </button>
+                               )}
+                               <button 
+                                 onClick={() => deleteNotification(notif.id)}
+                                 className="text-[9px] font-bold text-red-400 hover:text-red-600 uppercase"
+                               >
+                                 Hapus
+                               </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Header with Refresh */}
       {statusMessage && (
         <motion.div 
@@ -1490,11 +2620,18 @@ export default function AdminDashboard() {
         </div>
         <div className="flex gap-3">
            <button 
-            onClick={seedSampleData}
-            className="px-4 py-2 bg-amber-50 text-amber-600 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-amber-100 transition-all"
+             onClick={() => setShowNotifications(!showNotifications)}
+             className={cn(
+               "relative p-2 rounded-xl transition-all border",
+               showNotifications ? "bg-blue-600 text-white border-blue-600 shadow-lg" : "bg-white text-gray-400 border-gray-100 hover:bg-gray-50"
+             )}
            >
-             <FilePlus size={16} />
-             Populasi Sampel
+             {adminNotifications.filter(n => !n.read).length > 0 ? <BellRing size={20} className="animate-pulse" /> : <Bell size={20} />}
+             {adminNotifications.filter(n => !n.read).length > 0 && (
+               <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm">
+                 {adminNotifications.filter(n => !n.read).length}
+               </span>
+             )}
            </button>
            <button 
             onClick={fetchData}
@@ -1508,119 +2645,227 @@ export default function AdminDashboard() {
       {/* Stats Cards - AdminLTE 스타일 Small Box */}
       {activeTab === 'overview' && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { label: 'Total Siswa', value: stats.totalStudents, icon: GraduationCap, color: 'bg-info', bg: 'bg-blue-500' },
-              { label: 'Pending', value: stats.activeAttendance, icon: Clock, color: 'bg-warning', bg: 'bg-yellow-500' },
               { label: 'Total Sakit', value: stats.sakit, icon: AlertCircle, color: 'bg-danger', bg: 'bg-red-500' },
               { label: 'Total Izin', value: stats.izin, icon: CalendarIcon, color: 'bg-success', bg: 'bg-green-500' },
               { label: 'Total Dispensasi', value: stats.dispensasi, icon: CheckCircle2, color: 'bg-purple', bg: 'bg-purple-500' },
             ].map((stat, i) => (
-              <div key={stat.label} className={cn("relative overflow-hidden rounded-lg shadow-sm text-white", stat.bg)}>
-                <div className="p-4 z-10 relative">
-                  <h3 className="text-3xl font-bold mb-1">{stat.value}</h3>
-                  <p className="text-sm font-medium opacity-90">{stat.label}</p>
+              <div key={`${stat.label}-${i}`} className={cn("relative overflow-hidden rounded-lg shadow-sm text-white", stat.bg)}>
+                <div className="p-2 z-10 relative">
+                  <h3 className="text-xl font-bold mb-0.5">{stat.value}</h3>
+                  <p className="text-xs font-medium opacity-90">{stat.label}</p>
                 </div>
-                <div className="absolute right-2 top-2 opacity-20 transform scale-150">
-                  <stat.icon size={64} />
+                <div className="absolute right-1 top-1 opacity-20 transform scale-125">
+                  <stat.icon size={32} />
                 </div>
-                <div className="bg-black/10 text-center py-1 text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-black/20 transition-all">
-                   Selengkapnya <Plus size={10} className="inline ml-1" />
+                <div className="bg-black/10 text-center py-0.5 text-[8px] font-bold uppercase tracking-wider cursor-pointer hover:bg-black/20 transition-all">
+                   Selengkapnya <Plus size={8} className="inline ml-1" />
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Chart */}
-          <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-             <AttendanceChart attendance={attendance} />
-             <AttendanceTrendChart attendance={attendance} />
-          </div>
-          <div className="mb-6">
-             <AttendanceAlertsDisplay />
-          </div>
-
-          {/* Daily Summary Ringkasan Hari Ini */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-1 bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-               <h3 className="text-xs font-bold text-gray-800 mb-3 flex items-center gap-2">
-                 <Calendar size={16} className="text-blue-600" />
-                 Ringkasan Hari Ini ({formatDate(new Date(today))})
-               </h3>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-2.5 bg-amber-50 rounded-lg">
-                     <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-amber-500 flex items-center justify-center text-white">
-                           <AlertCircle size={14} />
+          {/* Daily Summary Ringkasan Hari Ini & Quick Access */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+            {/* Kehadiran & Informasi Sistem Column */}
+            <div className="lg:col-span-1 flex flex-col gap-3 h-full">
+               {/* Kehadiran Siswa Hari Ini */}
+               <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col">
+                  <div className="flex items-center justify-between mb-2">
+                     <div className="flex items-center gap-1.5">
+                        <div className="p-1 bg-sky-50 text-green-600 rounded-md">
+                           <UserCheck size={14} />
                         </div>
-                        <span className="text-[13px] font-bold text-amber-700">Sakit</span>
+                        <div>
+                           <h3 className="text-[9px] font-black text-gray-900 uppercase tracking-tight leading-none">Kehadiran Siswa</h3>
+                           <p className="text-[7px] font-bold text-sky-400 uppercase tracking-widest leading-none mt-0.5">
+                              {formatDate(new Date(today))}
+                           </p>
+                        </div>
+                     </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 flex-1 items-center">
+                     <div className="bg-green-50/40 p-2 rounded-lg border border-green-100 flex flex-col items-center justify-center">
+                        <p className="text-[6px] font-black text-green-600 uppercase tracking-widest mb-1 leading-none text-center">Tepat Waktu</p>
+                        <span className="text-xl font-black text-green-700 leading-none">{stats.todayOnTime}</span>
+                     </div>
+                     <div className="bg-orange-50/40 p-2 rounded-lg border border-orange-100 flex flex-col items-center justify-center">
+                        <p className="text-[6px] font-black text-orange-600 uppercase tracking-widest mb-1 leading-none text-center">Terlambat</p>
+                        <span className="text-xl font-black text-orange-700 leading-none">{stats.todayLate}</span>
+                     </div>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-gray-50 flex items-center justify-between">
+                     <span className="text-[7px] text-gray-400 font-bold uppercase tracking-widest leading-none">Total Hadir Sekarang</span>
+                     <span className="text-[9px] font-black text-gray-900 leading-none">{stats.todayOnTime + stats.todayLate} Siswa</span>
+                  </div>
+               </div>
+
+               {/* Informasi Sistem */}
+               <div className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col">
+                  <h3 className="text-[10px] font-bold text-gray-800 mb-1.5 flex items-center gap-1">
+                     <Activity size={12} className="text-sky-600" />
+                     Informasi Sistem
+                  </h3>
+                  <div className="flex flex-col gap-1.5 flex-1">
+                     <div className="bg-sky-50 p-1.5 rounded-lg border border-sky-100">
+                        <p className="text-[6px] font-black uppercase tracking-widest text-sky-400 mb-0.5">Status Database</p>
+                        <div className="flex items-center gap-1">
+                           <div className="w-1 h-1 rounded-full bg-green-500 animate-pulse"></div>
+                           <p className="font-bold text-[7px] text-sky-900 leading-none">Terhubung (Cloud Firestore)</p>
+                        </div>
+                     </div>
+                     <div className="bg-sky-50 p-1.5 rounded-lg border border-sky-100">
+                        <p className="text-[6px] font-black uppercase tracking-widest text-sky-400 mb-0.5">Akses WhatsApp</p>
+                        <p className="font-bold text-[7px] text-sky-900 flex items-center gap-1 leading-none">
+                           <MessageCircle size={7} className="text-green-500" /> Aktif Gateway
+                        </p>
+                     </div>
+                     <ScannerStatus />
+                  </div>
+                  <div className="mt-2">
+                     <p className="text-[7px] text-gray-400 font-medium leading-relaxed italic">
+                        Sinkronisasi data master, gateway & scanner.
+                     </p>
+                  </div>
+               </div>
+            </div>
+
+            <div className="lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-full">
+               <h3 className="text-xs font-black text-gray-800 mb-3 flex items-center gap-1.5">
+                  <Calendar size={14} className="text-blue-600" />
+                  Ringkasan Hari Ini ({formatDate(new Date(today))})
+               </h3>
+                <div className="space-y-3 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between p-2.5 bg-amber-50 rounded-lg">
+                     <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center text-white">
+                           <AlertCircle size={12} />
+                        </div>
+                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-tight">Sakit</span>
                      </div>
                      <span className="text-lg font-black text-amber-700">{stats.todaySakit}</span>
                   </div>
                   
                   <div className="flex items-center justify-between p-2.5 bg-green-50 rounded-lg">
-                     <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white">
-                           <CalendarIcon size={14} />
+                     <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white">
+                           <CalendarIcon size={12} />
                         </div>
-                        <span className="text-[13px] font-bold text-green-700">Izin</span>
+                        <span className="text-[10px] font-black text-green-700 uppercase tracking-tight">Izin</span>
                      </div>
                      <span className="text-lg font-black text-green-700">{stats.todayIzin}</span>
                   </div>
 
                   <div className="flex items-center justify-between p-2.5 bg-blue-50 rounded-lg">
-                     <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-white">
-                           <CheckCircle2 size={14} />
+                     <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-white">
+                           <CheckCircle2 size={12} />
                         </div>
-                        <span className="text-[13px] font-bold text-blue-700">Dispensasi</span>
+                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-tight">Dispensasi</span>
                      </div>
                      <span className="text-lg font-black text-blue-700">{stats.todayDispensasi}</span>
                   </div>
 
                   <div className="flex items-center justify-between p-2.5 bg-red-50 rounded-lg">
-                     <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-red-500 flex items-center justify-center text-white">
-                           <AlertCircle size={14} />
+                     <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-red-500 flex items-center justify-center text-white">
+                           <AlertCircle size={12} />
                         </div>
-                        <span className="text-[13px] font-bold text-red-700">Alpa</span>
+                        <span className="text-[10px] font-black text-red-700 uppercase tracking-tight">Alpa</span>
                      </div>
                      <span className="text-lg font-black text-red-700">{stats.todayAlpa}</span>
                   </div>
 
-                  <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
-                     <span className="text-[10px] text-gray-500 font-medium">Total Absensi Hari Ini</span>
-                     <span className="text-xs font-bold text-gray-900">{stats.todayAlpa + stats.todaySakit + stats.todayIzin + stats.todayDispensasi} Siswa</span>
+                  <div className="pt-2 border-t border-gray-100 flex items-center justify-between mt-auto">
+                     <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Total Absensi</span>
+                     <span className="text-sm font-black text-gray-900">{stats.todayAlpa + stats.todaySakit + stats.todayIzin + stats.todayDispensasi} Siswa</span>
                   </div>
                </div>
             </div>
-            
-            {/* Placeholder for Quick Actions or another summary */}
-            <div className="md:col-span-2 bg-gradient-to-br from-blue-600 to-indigo-700 p-5 rounded-xl shadow-lg text-white">
-               <h3 className="text-base font-bold mb-3">Informasi Sistem</h3>
-               <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-white/10 p-3.5 rounded-lg backdrop-blur-sm border border-white/10">
-                     <p className="text-[9px] font-bold uppercase tracking-widest opacity-80 mb-1">Status Database</p>
-                     <div className="flex items-center gap-1.5">
-                        <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
-                        <p className="font-bold text-sm">Terhubung (Cloud Firestore)</p>
-                     </div>
-                  </div>
-                  <div className="bg-white/10 p-3.5 rounded-lg backdrop-blur-sm border border-white/10">
-                     <p className="text-[9px] font-bold uppercase tracking-widest opacity-80 mb-1">Akses WhatsApp</p>
-                     <p className="font-bold text-sm flex items-center gap-1.5">
-                        <MessageCircle size={12} className="text-green-400" /> Aktif
-                     </p>
-                  </div>
-               </div>
-               <div className="mt-6">
-                  <p className="text-[11px] opacity-80 leading-relaxed">
-                     Panel ini digunakan untuk memantau data master dan riwayat absensi (Sakit, Izin, Dispensasi) siswa SMPN 2 Magelang. 
-                     Gunakan fitur ekspor untuk mendownload laporan dalam format Excel atau PDF.
-                  </p>
-               </div>
+
+            {/* Quick Features Access */}
+            <div className="lg:col-span-1 flex flex-col gap-2 h-full">
+              <div 
+                onClick={() => printBulkCards('APPLINK')}
+                className="bg-white p-2 rounded-xl shadow-sm border border-red-200 hover:border-red-500 cursor-pointer transition-all flex items-center gap-2 group flex-1"
+              >
+                <div className="w-6 h-6 rounded-md bg-red-50 flex items-center justify-center text-red-600 group-hover:bg-red-600 group-hover:text-white transition-all">
+                  <QrCode size={12} />
+                </div>
+                <div>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Akses</p>
+                  <h4 className="text-[10px] font-bold text-gray-800">Cetak Link Aplikasi</h4>
+                </div>
+              </div>
+              <div 
+                onClick={() => printBulkCards('SISWA')}
+                className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 hover:border-indigo-500 cursor-pointer transition-all flex items-center gap-2 group flex-1"
+              >
+                <div className="w-6 h-6 rounded-md bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                  <IdCard size={12} />
+                </div>
+                <div>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Absensi</p>
+                  <h4 className="text-[10px] font-bold text-gray-800">Cetak Login Siswa</h4>
+                </div>
+              </div>
+              <div 
+                onClick={() => printBulkCards('GURU')}
+                className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 hover:border-blue-500 cursor-pointer transition-all flex items-center gap-2 group flex-1"
+              >
+                <div className="w-6 h-6 rounded-md bg-blue-50 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                  <Users size={12} />
+                </div>
+                <div>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Manajemen</p>
+                  <h4 className="text-[10px] font-bold text-gray-800">Cetak Login Guru</h4>
+                </div>
+              </div>
+              <div 
+                onClick={() => printBulkCards('PETUGAS')}
+                className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 hover:border-emerald-500 cursor-pointer transition-all flex items-center gap-2 group flex-1"
+              >
+                <div className="w-6 h-6 rounded-md bg-emerald-50 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                  <GraduationCap size={12} />
+                </div>
+                <div>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Petugas</p>
+                  <h4 className="text-[10px] font-bold text-gray-800">Cetak Login Petugas</h4>
+                </div>
+              </div>
+              <div 
+                onClick={() => printBulkCards('ORTU')}
+                className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 hover:border-orange-500 cursor-pointer transition-all flex items-center gap-2 group flex-1"
+              >
+                <div className="w-6 h-6 rounded-md bg-orange-50 flex items-center justify-center text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-all">
+                  <IdCard size={12} />
+                </div>
+                <div>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Akses Wali</p>
+                  <h4 className="text-[10px] font-bold text-gray-800">Cetak Login Orang Tua</h4>
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* Chart */}
+          <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+             <div className="lg:col-span-1">
+               <AttendanceChart attendance={attendance} />
+             </div>
+             <div className="lg:col-span-1">
+               <AttendanceTrendChart attendance={attendance} />
+             </div>
+          </div>
+          <div className="mb-6">
+             <AttendanceAlertsDisplay />
+          </div>
+
+
 
           {/* Infografis Absensi Hari Ini per Kelas */}
           {todayAttendanceByClass.length > 0 && (
@@ -1631,7 +2876,7 @@ export default function AdminDashboard() {
                </h3>
                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
                  {todayAttendanceByClass.map(([cls, data], idx) => (
-                   <div key={`${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
+                   <div key={`overview-cls-stat-v2-${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
                      <div className="flex items-center justify-between mb-2">
                        <span className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors uppercase">{cls}</span>
                        <span className="text-[10px] font-bold px-2 py-1 bg-blue-100 rounded-full text-blue-600">{data.total} Σ</span>
@@ -1659,6 +2904,111 @@ export default function AdminDashboard() {
                </div>
             </div>
           )}
+
+          {/* Pending Attendance Requests Section */}
+          {pendingAttendance.length > 0 && (
+            <div className="mt-8 bg-white rounded-2xl shadow-sm border border-amber-200 overflow-hidden">
+               <div className="p-4 bg-gradient-to-r from-amber-500 to-amber-600 border-b border-amber-600 flex justify-between items-center">
+                  <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                    <Clock size={18} />
+                    Permohonan Menunggu Persetujuan ({pendingAttendance.length})
+                  </h3>
+                  <button 
+                    onClick={() => setActiveTab('attendance-detail')}
+                    className="text-[10px] font-bold text-amber-50 bg-amber-700/50 px-3 py-1.5 rounded-xl uppercase hover:bg-amber-700 transition-all border border-amber-400/30 shadow-sm"
+                  >
+                    Kelola Semua
+                  </button>
+               </div>
+               <div className="overflow-x-auto">
+                 <table className="w-full text-left border-collapse">
+                   <thead>
+                     <tr className="bg-amber-50/50 border-b border-amber-100">
+                       <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest border-r border-amber-100">Informasi Siswa</th>
+                       <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest border-r border-amber-100">Alasan & Tanggal</th>
+                       <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest border-r border-amber-100 text-center">Berkas Lampiran</th>
+                       <th className="px-6 py-4 text-[10px] font-black text-amber-700 uppercase tracking-widest text-center">Persetujuan Cepat</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-amber-50">
+                     {pendingAttendance.slice(0, 5).map((a, idx) => (
+                       <tr key={`pending-ov-row-${a.id || idx}-${idx}`} className="hover:bg-amber-50/30 transition-colors">
+                         <td className="px-6 py-4 border-r border-amber-50">
+                            <p className="font-black text-gray-900 text-sm leading-none">{a.studentName}</p>
+                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter mt-1.5">{a.className}</p>
+                         </td>
+                         <td className="px-6 py-4 border-r border-amber-50">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest",
+                                a.type === 'Sakit' ? "bg-red-100 text-red-600 border border-red-200" : "bg-yellow-100 text-yellow-600 border border-yellow-200"
+                              )}>
+                                {a.type}
+                              </span>
+                              <span className="text-[10px] font-bold text-gray-400">{a.date ? formatDate(new Date(a.date)) : '-'}</span>
+                            </div>
+                            <p className="text-[11px] text-gray-600 font-medium italic line-clamp-1 leading-none">"{a.reason || 'Keterangan tidak disertai'}"</p>
+                         </td>
+                         <td className="px-6 py-4 border-r border-amber-50 text-center">
+                            {a.documentUrl ? (
+                              <div className="flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => window.open(a.documentUrl, '_blank')}
+                                  className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all border border-blue-100 shadow-sm"
+                                  title="Lihat Berkas"
+                                >
+                                  <FileText size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => downloadDocument(a.documentUrl!, a.studentName!, a.date!, a.type!)}
+                                  className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100 shadow-sm"
+                                  title="Unduh Berkas ke Lokal"
+                                >
+                                  <Download size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center opacity-30">
+                                <HardDrive size={16} className="text-gray-400" />
+                                <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-1">Tanpa Berkas</span>
+                              </div>
+                            )}
+                         </td>
+                         <td className="px-6 py-4 text-center">
+                            <div className="flex items-center justify-center gap-3">
+                               <button 
+                                  onClick={() => handleStatusUpdate(a.id!, 'Approved')}
+                                  className="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center hover:bg-green-600 shadow-md shadow-green-100 hover:scale-110 active:scale-95 transition-all"
+                                  title="Terima Permohonan"
+                               >
+                                  <CheckCircle2 size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => handleStatusUpdate(a.id!, 'Rejected')}
+                                  className="w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 shadow-md shadow-red-100 hover:scale-110 active:scale-95 transition-all"
+                                  title="Tolak Permohonan"
+                               >
+                                  <XCircle size={16} />
+                               </button>
+                            </div>
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+               {pendingAttendance.length > 5 && (
+                 <div className="p-4 bg-amber-50/50 border-t border-amber-100 text-center">
+                    <button 
+                      onClick={() => setActiveTab('attendance-detail')}
+                      className="text-[10px] font-black text-amber-700 uppercase tracking-[0.3em] hover:tracking-[0.4em] transition-all flex items-center justify-center gap-2 mx-auto"
+                    >
+                      LIHAT {pendingAttendance.length - 5} PERMOHONAN LAINNYA <ChevronRight size={14} />
+                    </button>
+                 </div>
+               )}
+            </div>
+          )}
         </>
       )}
 
@@ -1670,7 +3020,7 @@ export default function AdminDashboard() {
                   onClick={() => setSearchParams({tab: 'role-management-guru'})} 
                   className={cn("px-6 py-3 rounded-xl flex items-center gap-2 font-bold transition-all border-none outline-none", activeTab === 'role-management-guru' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
                 >
-                  <Users size={20} /> Manajemen Peran Guru
+                  <Users size={20} /> Kelola Peran Guru
                 </button>
                 <button 
                   onClick={() => setSearchParams({tab: 'role-management-petugas'})} 
@@ -1681,108 +3031,153 @@ export default function AdminDashboard() {
               </div>
 
               {activeTab === 'role-management-guru' && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
-                  <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
-                    <Users size={18} /> Daftar Peran Guru
-                  </h3>
-                  <span className="px-3 py-1 bg-white/20 text-white text-xs font-bold rounded-full">
-                    {teachers.length} Guru
-                  </span>
+              <div className="space-y-6">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                        <ShieldCheck className="text-indigo-600" size={24} />
+                        Manajemen Peran & Izin Guru
+                      </h2>
+                      <p className="text-sm text-gray-500 font-medium">Atur peran Wali Kelas, Guru Mapel, dan Guru BK serta kelas ampuhannya.</p>
+                    </div>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                      <input 
+                        type="text" 
+                        placeholder="Cari nama atau NIP guru..." 
+                        className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-64"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[800px]">
-                    <thead>
-                      <tr className="bg-indigo-50/50 border-b border-indigo-100/50">
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase">No</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase">Nama Guru</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase">Bidang Studi</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase">Wali Kelas</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase">Guru BK</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-indigo-700 uppercase text-center">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {teachers.slice((roleManagementPage - 1) * 12, roleManagementPage * 12).map((t, idx) => (
-                        <tr key={t.id} className="hover:bg-indigo-50/20 transition-colors">
-                          <td className="px-6 py-3 text-sm text-gray-500 font-medium">{(roleManagementPage - 1) * 12 + idx + 1}</td>
-                          <td className="px-6 py-3 text-sm font-bold text-gray-900">{t.name}</td>
-                          <td className="px-6 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {t.status?.includes('Guru Mata Pelajaran') ? (
-                                (Array.isArray(t.subjects) ? t.subjects : []).map((s, si) => (
-                                  <span key={si} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded border border-blue-100">{s}</span>
-                                ))
+
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
+                    <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                      <Users size={18} /> Daftar Otoritas Guru
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black rounded-full uppercase">
+                        {teachers.length} Total Guru
+                      </span>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[1000px]">
+                      <thead>
+                        <tr className="bg-indigo-50/50 border-b border-indigo-100/50">
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">No</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Informasi Guru</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru Mapel (Bidang Studi)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Wali Kelas</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru BK (Kelas Bimbingan)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider text-center">Opsi Izin</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {teachers
+                          .filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm))
+                          .slice((roleManagementPage - 1) * 12, roleManagementPage * 12)
+                          .map((t, idx) => (
+                          <tr key={t.id ? `role-manage-row-${t.id}-${idx}` : `role-manage-row-idx-${idx}`} className="hover:bg-indigo-50/10 transition-colors">
+                            <td className="px-6 py-4 text-xs text-gray-400 font-bold">{(roleManagementPage - 1) * 12 + idx + 1}</td>
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-bold text-gray-900 leading-none">{t.name}</p>
+                              <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-tighter">NIP: {t.nip || '-'}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-1">
+                                {t.status?.includes('Guru Mapel') ? (
+                                  <>
+                                    <div className="w-full mb-1">
+                                      {(Array.isArray(t.subjects) ? t.subjects : []).length > 0 ? (
+                                        (Array.isArray(t.subjects) ? t.subjects : []).map((s, si) => (
+                                          <span key={`role-sub-${t.id || 't'}-${si}`} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded border border-blue-100 mr-1 uppercase">{s}</span>
+                                        ))
+                                      ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Subjek Kosong</span>}
+                                    </div>
+                                    <p className="text-[9px] text-gray-400 font-medium">Kelas: {(Array.isArray(t.taughtClasses) ? t.taughtClasses : []).join(', ') || '-'}</p>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-gray-300 italic">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              {t.status?.includes('Wali Kelas') ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+                                  <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">{t.className || 'Error'}</span>
+                                </div>
                               ) : (
-                                <span className="text-[10px] text-gray-400 italic">Bukan Guru Mapel</span>
+                                <span className="text-[10px] text-gray-300 italic">-</span>
                               )}
-                            </div>
-                          </td>
-                          <td className="px-6 py-3 text-sm font-bold text-emerald-600">
-                            {t.status?.includes('Wali Kelas') ? (t.className || '-') : '-'}
-                          </td>
-                          <td className="px-6 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {t.status?.includes('Guru BK') ? (
-                                (Array.isArray(t.managedClasses) ? t.managedClasses : []).map((mc, mci) => (
-                                  <span key={mci} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded border border-purple-100">{mc}</span>
-                                ))
-                              ) : (
-                                <span className="text-[10px] text-gray-400 italic">-</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-6 py-3 text-center">
-                            <div className="flex items-center justify-center gap-2">
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-1">
+                                {t.status?.includes('Guru BK') ? (
+                                  <>
+                                    {(Array.isArray(t.managedClasses) ? t.managedClasses : []).length > 0 ? (
+                                      (Array.isArray(t.managedClasses) ? t.managedClasses : []).map((mc, mci) => (
+                                        <span key={`bk-${t.id}-${mci}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-black rounded border border-purple-100 uppercase">{mc}</span>
+                                      ))
+                                    ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Kelas Kosong</span>}
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-gray-300 italic">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-center">
                               <button 
                                 onClick={() => {
                                   setFormData({
                                     ...t,
-                                    subjects: Array.isArray(t.subjects) ? t.subjects.join(', ') : t.subjects,
-                                    taughtClasses: Array.isArray(t.taughtClasses) ? t.taughtClasses.join(', ') : t.taughtClasses,
-                                    managedClasses: Array.isArray(t.managedClasses) ? t.managedClasses.join(', ') : t.managedClasses,
+                                    subjects: Array.isArray(t.subjects) ? t.subjects.join(', ') : (t.subjects || ''),
+                                    taughtClasses: Array.isArray(t.taughtClasses) ? t.taughtClasses.join(', ') : (t.taughtClasses || ''),
+                                    managedClasses: Array.isArray(t.managedClasses) ? t.managedClasses.join(', ') : (t.managedClasses || ''),
                                     isChangingRole: true
                                   });
                                   setShowAddModal(true);
                                 }}
-                                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold hover:bg-indigo-700 transition-all shadow-sm"
+                                className="px-4 py-2 bg-white border-2 border-indigo-600 text-indigo-600 rounded-xl text-[10px] font-black hover:bg-indigo-600 hover:text-white transition-all shadow-sm flex items-center gap-1.5 mx-auto uppercase tracking-wider"
                               >
-                                PILIH PERAN
+                                <Key size={12} />
+                                Kelola Otoritas
                               </button>
-                              <button onClick={() => { setFormData(t); setShowAddModal(true); }} className="p-1.5 bg-blue-100 text-blue-600 rounded hover:bg-blue-200"><Edit size={12} /></button>
-                              <button onClick={() => t.id && handleDelete(t.id, 'teachers')} className="p-1.5 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-all flex items-center gap-1">
-                                <Trash2 size={12} /> HAPUS
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  
-                  {teachers.length > 12 && (
-                    <div className="p-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
-                      <span className="text-sm text-gray-500 font-medium">
-                        Menampilkan {(roleManagementPage - 1) * 12 + 1} - {Math.min(roleManagementPage * 12, teachers.length)} dari {teachers.length} guru
-                      </span>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => setRoleManagementPage(p => Math.max(1, p - 1))}
-                          disabled={roleManagementPage === 1}
-                          className="px-3 py-1 bg-white border border-gray-200 rounded text-sm disabled:opacity-50 transition-all font-bold"
-                        >
-                          Sebelumnya
-                        </button>
-                        <button 
-                          onClick={() => setRoleManagementPage(p => Math.min(Math.ceil(teachers.length / 12), p + 1))}
-                          disabled={roleManagementPage === Math.ceil(teachers.length / 12)}
-                          className="px-3 py-1 bg-white border border-gray-200 rounded text-sm disabled:opacity-50 transition-all font-bold"
-                        >
-                          Selanjutnya
-                        </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    
+                    {(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length > 12) && (
+                      <div className="p-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                          Hal {roleManagementPage} / {Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
+                        </span>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setRoleManagementPage(p => Math.max(1, p - 1))}
+                            disabled={roleManagementPage === 1}
+                            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
+                          >
+                            Prev
+                          </button>
+                          <button 
+                            onClick={() => setRoleManagementPage(p => Math.min(Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12), p + 1))}
+                            disabled={roleManagementPage === Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
+                            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
+                          >
+                            Next
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
               )}
@@ -1825,13 +3220,13 @@ export default function AdminDashboard() {
                             const className = e.target.value;
                             setFormData({ ...formData, tempClassForOfficer: className });
                             const currentOfficers = students
-                              .filter(s => s.className === className && (s as any).role === 'STUDENT')
+                              .filter(s => s.className === className && (s as any).role === 'PETUGAS_ABSEN_KELAS')
                               .map(s => s.id!);
                             setSelectedClassOfficers(currentOfficers);
                           }}
                         >
                           <option value="">-- Pilih Daftar Kelas --</option>
-                          {[...classes].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map(cl => <option key={cl.id} value={cl.name}>{cl.name}</option>)}
+                          {[...classes].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={`cl-sel-opt-${cl.id || i}`} value={cl.name}>{cl.name}</option>)}
                         </select>
                       </div>
 
@@ -1847,13 +3242,13 @@ export default function AdminDashboard() {
                             {students
                               .filter(s => s.className === formData.tempClassForOfficer)
                               .sort((a,b) => (a.name || '').localeCompare(b.name || ''))
-                              .map(s => {
+                              .map((s, idx) => {
                                 const isSelected = selectedClassOfficers.includes(s.id!);
                                 const isDisabled = !isSelected && selectedClassOfficers.length >= 2;
 
                                 return (
                                   <label 
-                                    key={s.id} 
+                                    key={s.id ? `off-cand-${s.id}-${idx}` : `off-cand-${s.nis || s.name}-${idx}`} 
                                     className={cn(
                                       "flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-xl hover:bg-emerald-50 transition-colors",
                                       isSelected ? "ring-2 ring-emerald-500 bg-emerald-50/30" : "",
@@ -1932,38 +3327,89 @@ export default function AdminDashboard() {
                   <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                     <Users size={18} /> Daftar Petugas Absensi Kelas
                   </h3>
-                  <span className="px-2 py-1 bg-blue-600/20 text-blue-400 text-[10px] font-bold rounded-lg border border-blue-600/30">
-                    {allOfficers.length} Petugas Aktif
-                  </span>
+                  <div className="flex items-center gap-4">
+                    {selectedOfficers.length > 0 && (
+                      <button 
+                        onClick={printSelectedOfficerLoginCards}
+                        className="px-3 py-1 bg-indigo-600 text-white rounded text-[10px] font-bold hover:bg-indigo-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                      >
+                        <Download size={12} /> UNDUH KARTU MASAL ({selectedOfficers.length})
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setShowAddOfficerForm(true)}
+                      className="px-3 py-1 bg-emerald-600 text-white rounded text-[10px] font-bold hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                    >
+                      <Plus size={12} /> TAMBAH PETUGAS
+                    </button>
+                    <span className="px-2 py-1 bg-blue-600/20 text-blue-400 text-[10px] font-bold rounded-lg border border-blue-600/30">
+                      {allOfficers.length} Petugas Aktif
+                    </span>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[800px]">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="px-6 py-3 w-10 border-r border-gray-100">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={allOfficers.length > 0 && allOfficers.every(o => selectedOfficers.includes(o.id!))}
+                            onChange={() => toggleAllOfficers(allOfficers.map(o => o.id!))}
+                          />
+                        </th>
                         <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">No</th>
                         <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Kelas</th>
                         <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Nama Siswa</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase text-center">Aksi</th>
+                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">USER ID</th>
+                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">SANDI</th>
+                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase text-center">QR CODE</th>
+                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase text-center">UNDUH KARTU</th>
+                        <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase text-center">AKSI</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {paginatedOfficers.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="px-6 py-12 text-center text-gray-400 italic text-sm">Belum ada petugas kelas yang ditunjuk.</td>
+                          <td colSpan={9} className="px-6 py-12 text-center text-gray-400 italic text-sm">Belum ada petugas kelas yang ditunjuk.</td>
                         </tr>
                       ) : (
                         paginatedOfficers.map((o, idx) => (
-                          <tr key={o.id} className="hover:bg-blue-50/20 transition-colors">
+                          <tr key={o.id ? `officer-${o.id}-${idx}` : `officer-${idx}`} className={cn("hover:bg-blue-50/20 transition-colors", selectedOfficers.includes(o.id!) && "bg-blue-50")}>
+                            <td className="px-6 py-4 border-r border-gray-50 text-center">
+                              <input 
+                                type="checkbox" 
+                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                checked={selectedOfficers.includes(o.id!)}
+                                onChange={() => toggleOfficerSelection(o.id!)}
+                              />
+                            </td>
                             <td className="px-6 py-4 text-sm text-gray-400 font-medium">{(officerListPage - 1) * itemsPerPage + idx + 1}</td>
                             <td className="px-6 py-4 text-sm font-black text-blue-600 uppercase">{o.className}</td>
                             <td className="px-6 py-4 text-sm font-bold text-gray-900">{o.name}</td>
+                            <td className="px-6 py-4 text-sm text-gray-900 font-mono italic">{`${o.className}${String((o as any).absensiNo || '').padStart(2, '0')}`}</td>
+                            <td className="px-6 py-4 text-sm text-gray-900 font-mono italic">{(o as any).nis || '-'}</td>
+                            <td className="px-6 py-4 text-center">
+                               <QRThumbnail value={`${o.className}${String((o as any).absensiNo || '').padStart(2, '0')}`} />
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <button 
+                                onClick={() => printLoginCard(o, 'PETUGAS')}
+                                className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 border border-indigo-100 mx-auto"
+                                title="Download Kartu Login"
+                              >
+                                <Download size={14} />
+                                <span className="text-[10px] font-black">UNDUH</span>
+                              </button>
+                            </td>
                             <td className="px-6 py-4 text-center">
                               <div className="flex items-center justify-center gap-2">
                                 <button 
                                   onClick={() => {
                                     setFormData({ ...formData, tempClassForOfficer: o.className });
                                     const currentOfficers = students
-                                      .filter(s => s.className === o.className && (s as any).role === 'STUDENT')
+                                      .filter(s => s.className === o.className && ((s as any).role === 'PETUGAS_ABSEN_KELAS' || (s as any).role === 'STUDENT'))
                                       .map(s => s.id!);
                                     setSelectedClassOfficers(currentOfficers);
                                     setShowAddOfficerForm(true);
@@ -2012,7 +3458,7 @@ export default function AdminDashboard() {
                        </button>
                        {[...Array(totalOfficerPages)].map((_, i) => (
                          <button 
-                          key={i}
+                          key={'pag-officer-' + i}
                           onClick={() => setOfficerListPage(i + 1)}
                           className={cn(
                             "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -2038,6 +3484,7 @@ export default function AdminDashboard() {
             </div>
           )}
           {activeTab === 'students' && (
+            <>
             <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
@@ -2076,37 +3523,39 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
-          )}
 
-      {activeTab === 'students' && studentSummaryByClass.length > 0 && (
-        <div className="mb-6 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="text-sm font-bold text-gray-800 mb-6 flex items-center gap-2 uppercase tracking-widest">
-            <Filter size={18} className="text-blue-600" />
-            Infografis Data Siswa per Kelas
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-            {studentSummaryByClass.map(([cls, data]: any, idx: number) => (
-              <div key={`${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">{cls}</span>
-                  <span className="text-[10px] font-bold px-2 py-1 bg-gray-200 rounded-full text-gray-600">{data.total} Σ</span>
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1 text-center">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase leading-tight">L</p>
-                    <p className="text-sm font-black text-indigo-500">{data.l}</p>
-                  </div>
-                  <div className="w-px h-6 bg-gray-200 my-auto"></div>
-                  <div className="flex-1 text-center">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase leading-tight">P</p>
-                    <p className="text-sm font-black text-pink-500">{data.p}</p>
-                  </div>
+            {studentSummaryByClass.length > 0 && (
+              <div className="mb-6 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="text-sm font-bold text-gray-800 mb-6 flex items-center gap-2 uppercase tracking-widest">
+                  <Filter size={18} className="text-blue-600" />
+                  Infografis Data Siswa per Kelas
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                  {studentSummaryByClass.map(([cls, data]: any, idx: number) => (
+                    <div key={`std-sum-cls-maintab-${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors uppercase">{cls}</span>
+                        <span className="text-[10px] font-bold px-2 py-1 bg-gray-200 rounded-full text-gray-600">{data.total} Σ</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="flex-1 text-center">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase leading-tight">L</p>
+                          <p className="text-sm font-black text-indigo-500">{data.l}</p>
+                        </div>
+                        <div className="w-px h-6 bg-gray-200 my-auto"></div>
+                        <div className="flex-1 text-center">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase leading-tight">P</p>
+                          <p className="text-sm font-black text-pink-500">{data.p}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
+            </>
+          )}
+
 
       {(activeTab === 'attendance' || activeTab === 'attendance-summary' || activeTab === 'attendance-detail') && (
         <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2150,12 +3599,7 @@ export default function AdminDashboard() {
       )}
 
       {/* Content Container */}
-      {activeTab === 'student-pii' && (
-         <div className="p-6">
-            <StudentPIITab students={students} />
-         </div>
-      )}
-      {activeTab !== 'overview' && activeTab !== 'student-pii' && (
+      {activeTab !== 'overview' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {/* Header Content */}
         <div className="p-4 md:p-6 bg-white border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2179,7 +3623,7 @@ export default function AdminDashboard() {
                >
                  <option value="">SEMUA KELAS</option>
                  {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => (
-                   <option key={cl.id || `class-filter-${idx}`} value={cl.name}>{cl.name}</option>
+                   <option key={`class-filter-opt-${cl.id || 'idx-'+idx}`} value={cl.name}>{cl.name}</option>
                  ))}
                </select>
              )}
@@ -2199,6 +3643,12 @@ export default function AdminDashboard() {
                     <RefreshCw size={14} /> GENERATE SANDI ORTU
                   </button>
                   <button 
+                    onClick={handleDeleteDuplicateStudents}
+                    className="px-3 py-2 bg-pink-600 text-white rounded text-xs font-bold hover:bg-pink-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                  >
+                    <AlertCircle size={14} /> HAPUS GANDA ({duplicateNises.length})
+                  </button>
+                  <button 
                     onClick={handleDeleteAllStudents}
                     className="px-3 py-2 bg-red-800 text-white rounded text-xs font-bold hover:bg-red-900 transition-all flex items-center gap-1 shadow-sm uppercase"
                   >
@@ -2210,6 +3660,14 @@ export default function AdminDashboard() {
                       className="px-3 py-2 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-sm uppercase"
                     >
                       <IdCard size={14} /> CETAK KARTU ({selectedStudents.length})
+                    </button>
+                  )}
+                  {selectedStudents.length > 0 && (
+                    <button 
+                      onClick={printSelectedLoginCards}
+                      className="px-3 py-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                    >
+                      <IdCard size={14} /> KARTU LOGIN ({selectedStudents.length})
                     </button>
                   )}
                   {selectedStudents.length > 0 && (
@@ -2263,8 +3721,22 @@ export default function AdminDashboard() {
                           }
 
                           setLoading(true);
-                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Siswa' });
+                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Siswa' });
                           try {
+                            const snapshot = await getDocs(collection(db, 'students'));
+                            const existingStudents = snapshot.docs.map(doc => doc.data());
+                            const existingNis = new Set(existingStudents.map(s => s.nis));
+
+                            for (const row of jsonData as any[]) {
+                              const nis = String(row['NIS'] || '');
+                              const nisn = String(row['NISN'] || '');
+                              if (!nis || !nisn) throw new Error('NIS dan NISN harus diisi.');
+                              if (existingNis.has(nis)) throw new Error(`NIS ${nis} sudah terdaftar.`);
+                              if (!/^\d{10}$/.test(nisn)) throw new Error(`NISN ${nisn} tidak valid (harus 10 angka).`);
+                              existingNis.add(nis);
+                            }
+
+                            setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Siswa' });
                             let count = 0;
                             const affectedClasses = new Set<string>();
                             for (const row of jsonData as any[]) {
@@ -2282,7 +3754,6 @@ export default function AdminDashboard() {
                             }
                             
                             setUploadProgress({ current: jsonData.length, total: jsonData.length, label: 'Menghasilkan Sandi...' });
-                            // Let the database settle before generating passwords
                             setTimeout(async () => {
                               try {
                                 const promises = Array.from(affectedClasses).map(cls => generatePasswordsForClass(cls));
@@ -2297,7 +3768,7 @@ export default function AdminDashboard() {
                             fetchData();
                           } catch (err) {
                             console.error(err);
-                            alert('Gagal mengunggah data.');
+                            alert(`Gagal mengunggah data: ${err instanceof Error ? err.message : 'Kesalahan tidak diketahui.'}`);
                           } finally {
                             setLoading(false);
                             setUploadProgress(null);
@@ -2321,7 +3792,7 @@ export default function AdminDashboard() {
                   <button 
                     onClick={() => {
                       const templateData = [
-                        ['Nama Guru', 'NIP', 'SANDI', 'Kelas Ampuan']
+                        ['Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Kelas Ampuan']
                       ];
                       const ws = XLSX.utils.aoa_to_sheet(templateData);
                       const wb = XLSX.utils.book_new();
@@ -2361,11 +3832,13 @@ export default function AdminDashboard() {
                             for (const row of jsonData as any[]) {
                               const nip = String(row['NIP'] || '');
                               const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
+                              const phoneNumber = String(row['Nomor WA'] || '');
                               
                               await addDoc(collection(db, 'teachers'), {
                                 name: row['Nama Guru'] || row['Nama'] || '',
                                 nip: nip,
                                 password: password,
+                                phoneNumber: phoneNumber,
                                 className: String(row['Kelas Ampuan'] || ''),
                                 status: ['Wali Kelas'],
                                 role: 'TEACHER'
@@ -2401,7 +3874,7 @@ export default function AdminDashboard() {
                   <button 
                     onClick={() => {
                       const templateData = [
-                        ['Nama Guru', 'NIP', 'SANDI', 'Status/Jabatan']
+                        ['Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Status/Jabatan']
                       ];
                       const ws = XLSX.utils.aoa_to_sheet(templateData);
                       const wb = XLSX.utils.book_new();
@@ -2446,12 +3919,14 @@ export default function AdminDashboard() {
                               }
 
                               const nip = String(row['NIP'] || '');
-                              const password = row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
+                              const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
+                              const phoneNumber = String(row['Nomor WA'] || '');
 
                               await addDoc(collection(db, 'teachers'), {
                                 name: row['Nama Guru'] || row['Nama'] || '',
                                 nip: nip,
                                 password: String(password),
+                                phoneNumber: phoneNumber,
                                 status: statusArr,
                                 role: 'TEACHER'
                               });
@@ -2488,7 +3963,7 @@ export default function AdminDashboard() {
                   <button 
                     onClick={() => {
                       const templateData = [
-                        ['Nama Guru', 'Bidang Studi (pisahkan koma: MTK, IPA)', 'Kelas Ampuan (pisahkan koma: 7A, 7B)']
+                        ['Nama Guru', 'NIP', 'SANDI', 'Nomor WA', 'Bidang Studi (pisahkan koma: MTK, IPA)', 'Kelas Ampuan (pisahkan koma: 7A, 7B)']
                       ];
                       const ws = XLSX.utils.aoa_to_sheet(templateData);
                       const wb = XLSX.utils.book_new();
@@ -2528,13 +4003,19 @@ export default function AdminDashboard() {
                             for (const row of jsonData as any[]) {
                               const subjectsRaw = String(row['Bidang Studi (pisahkan koma: MTK, IPA)'] || '');
                               const classesRaw = String(row['Kelas Ampuan (pisahkan koma: 7A, 7B)'] || '');
+                              const nip = String(row['NIP'] || '');
+                              const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
+                              const phoneNumber = String(row['Nomor WA'] || '');
                               
                               const subjects = subjectsRaw ? subjectsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
                               const taughtClasses = classesRaw ? classesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
 
                               await addDoc(collection(db, 'teachers'), {
                                 name: row['Nama Guru'] || '',
-                                status: ['Guru Mata Pelajaran'],
+                                nip: nip,
+                                password: password,
+                                phoneNumber: phoneNumber,
+                                status: ['Guru Mapel'],
                                 subjects: subjects,
                                 taughtClasses: taughtClasses,
                                 role: 'TEACHER'
@@ -2542,7 +4023,7 @@ export default function AdminDashboard() {
                               count++;
                               setUploadProgress({ current: count, total: jsonData.length, label: 'Mengunggah Data Guru Mapel' });
                             }
-                            alert(`${jsonData.length} Guru Mata Pelajaran berhasil diunggah!`);
+                            alert(`${jsonData.length} Guru Mapel berhasil diunggah!`);
                             fetchData();
                           } catch (err) {
                             console.error(err);
@@ -2591,7 +4072,7 @@ export default function AdminDashboard() {
                  >
                    <option value="">Semua Kelas</option>
                    {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => (
-                     <option key={cl.id || `filter-class-${idx}`} value={cl.name}>{cl.name}</option>
+                    <option key={`${cl.id || `filter-class-${cl.name}`}-${idx}`} value={cl.name}>{cl.name}</option>
                    ))}
                  </select>
                  <input 
@@ -2653,7 +4134,7 @@ export default function AdminDashboard() {
                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md"
                >
                  <Plus size={18} />
-                 Tambah Data
+                 {activeTab === 'classes' ? 'Atur Tampilan Kelas' : 'Tambah Data'}
                </button>
              </div>
            )}
@@ -2667,11 +4148,25 @@ export default function AdminDashboard() {
                 <Trash2 size={14} /> HAPUS TERPILIH ({selectedTeachers.length})
               </button>
               <button 
+                onClick={handleDeleteDuplicateTeachers}
+                className="px-3 py-2 bg-pink-600 text-white rounded text-xs font-bold hover:bg-pink-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+              >
+                <AlertCircle size={14} /> HAPUS GANDA ({duplicateNips.length})
+              </button>
+              <button 
                 onClick={handleDeleteAllTeachers}
                 className="px-3 py-2 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1 shadow-sm"
               >
                 <AlertCircle size={14} /> HAPUS SEMUA
               </button>
+              {selectedTeachers.length > 0 && (
+                <button 
+                  onClick={printSelectedTeacherLoginCards}
+                  className="px-3 py-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                >
+                  <IdCard size={14} /> KARTU LOGIN ({selectedTeachers.length})
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -2679,8 +4174,42 @@ export default function AdminDashboard() {
         {/* Table Area (AdminLTE Style Tables) */}
         <div className="overflow-x-auto">
           {activeTab === 'students' && (
+            <div className="flex gap-2 mb-4">
+              {selectedStudents.length > 0 && (
+                <>
+                  <button 
+                    onClick={() => printSelectedLoginCards('SISWA')}
+                    className="px-3 py-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                  >
+                    <IdCard size={14} /> LOGIN SISWA ({selectedStudents.length})
+                  </button>
+                  <button 
+                    onClick={() => printSelectedLoginCards('ORTU')}
+                    className="px-3 py-2 bg-orange-600 text-white rounded text-xs font-bold hover:bg-orange-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                  >
+                    <Users size={14} /> LOGIN ORTU ({selectedStudents.length})
+                  </button>
+                  <button 
+                    onClick={printSelectedIDCards}
+                    className="px-3 py-2 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-sm uppercase"
+                  >
+                    <IdCard size={14} /> KARTU ID ({selectedStudents.length})
+                  </button>
+                </>
+              )}
+              <button 
+                onClick={handleDeleteSelectedStudents}
+                disabled={selectedStudents.length === 0}
+                className="px-3 py-2 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1 shadow-sm disabled:opacity-50"
+              >
+                <Trash2 size={14} /> HAPUS TERPILIH
+              </button>
+            </div>
+          )}
+          {activeTab === 'students' && (
             <>
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-3 w-10 border-r border-gray-200">
@@ -2697,12 +4226,13 @@ export default function AdminDashboard() {
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">JK</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">NIS (ID)</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Sandi Ortu</th>
+                  <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">QR Code</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedStudents.map((s, idx) => (
-                  <tr key={s.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", selectedStudents.includes(s.id) && "bg-blue-50/50")}>
+                  <tr key={`student-${s.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", selectedStudents.includes(s.id) && "bg-blue-50/50", s.nis && duplicateNises.includes(s.nis) && "bg-red-50 border-l-4 border-l-red-500")}>
                     <td className="px-6 py-3 border-r border-gray-100 text-center">
                       <input 
                         type="checkbox" 
@@ -2724,6 +4254,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">{s.nis}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-mono text-gray-700">{s.parentPassword || '-'}</td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-center"><QRThumbnail value={s.nis} /></td>
                     <td className="px-6 py-3 text-center">
                        <div className="flex items-center justify-center gap-2">
                           <button 
@@ -2731,6 +4262,12 @@ export default function AdminDashboard() {
                             className="px-3 py-1 bg-blue-600 text-white rounded text-[10px] font-bold uppercase hover:bg-blue-700 transition-all flex items-center gap-1"
                           >
                             <Edit size={12} /> EDIT
+                          </button>
+                          <button 
+                            onClick={() => handleShowStudentDetail(s)}
+                            className="px-3 py-1 bg-amber-600 text-white rounded text-[10px] font-bold uppercase hover:bg-amber-700 transition-all flex items-center gap-1"
+                          >
+                            <FileText size={12} /> DETAIL
                           </button>
                           <button onClick={() => handleDelete(s.id, 'students')} className="px-3 py-1 bg-red-600 text-white rounded text-[10px] font-bold uppercase hover:bg-red-700 transition-all flex items-center gap-1">
                             <Trash2 size={12} /> HAPUS
@@ -2741,12 +4278,19 @@ export default function AdminDashboard() {
                           >
                             <IdCard size={12} /> KARTU
                           </button>
+                          <button 
+                            onClick={() => printLoginCard(s, 'ORTU')}
+                            className="px-3 py-1 bg-indigo-600 text-white rounded text-[10px] font-bold uppercase hover:bg-indigo-700 transition-all flex items-center gap-1"
+                          >
+                            <IdCard size={12} /> KARTU LOGIN (ORTU)
+                          </button>
                        </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* Pagination Controls */}
             {totalStudentPages > 1 && (
@@ -2764,7 +4308,7 @@ export default function AdminDashboard() {
                    </button>
                    {[...Array(totalStudentPages)].map((_, i) => (
                      <button 
-                      key={i}
+                      key={'pag-student-ui-' + i}
                       onClick={() => setStudentPage(i + 1)}
                       className={cn(
                         "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -2789,27 +4333,30 @@ export default function AdminDashboard() {
 
           {activeTab === 'teachers' && (
             <>
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-3 w-10 border-r border-gray-200">
                     <input 
                       type="checkbox" 
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      checked={teachers.filter(t => t.status?.includes('Wali Kelas')).length > 0 && teachers.filter(t => t.status?.includes('Wali Kelas')).every(t => selectedTeachers.includes(t.id!))}
-                      onChange={() => toggleAllTeachers(teachers.filter(t => t.status?.includes('Wali Kelas')).map(t => t.id!))}
+                      checked={filteredWaliKelas.length > 0 && paginatedWaliKelas.every(t => selectedTeachers.includes(t.id!))}
+                      onChange={() => toggleAllTeachers(paginatedWaliKelas.map(t => t.id!))}
                     />
                   </th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">No</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Guru</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">NIP</th>
+                  <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">QR CODE</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Kelas Ampuan</th>
+                  <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nomor WA</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedWaliKelas.map((t, idx) => (
-                  <tr key={t.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50")}>
+                  <tr key={`wali-kelas-${t.id || idx}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
                     <td className="px-6 py-3 border-r border-gray-100 text-center">
                       <input 
                         type="checkbox" 
@@ -2819,13 +4366,27 @@ export default function AdminDashboard() {
                       />
                     </td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-gray-400 text-center">{(waliKelasPage - 1) * itemsPerPage + idx + 1}</td>
-                    <td className="px-6 py-3 border-r border-gray-100 font-medium text-gray-900">{t.name}</td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-sm font-medium text-gray-900">{t.name}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">{t.nip || '-'}</td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-center"><QRThumbnail value={t.nip || ''} /></td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-blue-600">{t.className || '-'}</td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-sm">{t.phoneNumber || '-'}</td>
                     <td className="px-6 py-3 text-center">
                        <div className="flex items-center justify-center gap-2">
                           <button onClick={() => { setFormData(t); setShowAddModal(true); }} className="px-3 py-1 bg-blue-600 text-white rounded text-[10px] font-bold uppercase hover:bg-blue-700 transition-all flex items-center gap-1">
                             <Edit size={12} /> EDIT
+                          </button>
+                          <button 
+                            onClick={() => printTeacherIDCard(t)}
+                            className="px-3 py-1 bg-amber-600 text-white rounded text-[10px] font-bold uppercase hover:bg-amber-700 transition-all flex items-center gap-1"
+                          >
+                            <IdCard size={12} /> KTA
+                          </button>
+                          <button 
+                            onClick={() => printLoginCard(t, 'GURU')}
+                            className="px-3 py-1 bg-indigo-600 text-white rounded text-[10px] font-bold uppercase hover:bg-indigo-700 transition-all flex items-center gap-1"
+                          >
+                            <IdCard size={12} /> LOGIN
                           </button>
                           <button onClick={() => t.id && handleDelete(t.id, 'teachers')} className="px-3 py-1 bg-red-600 text-white rounded text-[10px] font-bold uppercase hover:bg-red-700 transition-all flex items-center gap-1">
                             <Trash2 size={12} /> HAPUS
@@ -2836,6 +4397,7 @@ export default function AdminDashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* Pagination Controls Wali Kelas */}
             {totalWaliKelasPages > 1 && (
@@ -2853,7 +4415,7 @@ export default function AdminDashboard() {
                    </button>
                    {[...Array(totalWaliKelasPages)].map((_, i) => (
                      <button 
-                      key={i}
+                      key={'pag-walikelas-ui-' + i}
                       onClick={() => setWaliKelasPage(i + 1)}
                       className={cn(
                         "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -2878,8 +4440,9 @@ export default function AdminDashboard() {
 
           {activeTab === 'teachers-list' && (
             <>
-            <table className="w-full text-left border-collapse min-w-[800px]">
-              <thead>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-3 w-10 border-r border-gray-200">
                     <input 
@@ -2893,13 +4456,15 @@ export default function AdminDashboard() {
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Guru</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">NIP</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">SANDI</th>
+                  <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">QR CODE</th>
+                  <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nomor WA</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">STATUS</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedTeacherList.map((t, idx) => (
-                  <tr key={t.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50")}>
+                  <tr key={`teacher-list-${t.id || idx}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
                     <td className="px-6 py-3 border-r border-gray-100 text-center">
                       <input 
                         type="checkbox" 
@@ -2912,6 +4477,8 @@ export default function AdminDashboard() {
                     <td className="px-6 py-3 border-r border-gray-100 font-medium text-gray-900">{t.name}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">{t.nip || '-'}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-mono">{t.password || '-'}</td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-center"><QRThumbnail value={t.nip} /></td>
+                    <td className="px-6 py-3 border-r border-gray-100 text-sm">{t.phoneNumber || '-'}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">
                       <div className="flex flex-wrap gap-1">
                         {Array.isArray(t.status) 
@@ -2924,6 +4491,18 @@ export default function AdminDashboard() {
                           <button onClick={() => { setFormData(t); setShowAddModal(true); }} className="px-3 py-1 bg-blue-600 text-white rounded text-[10px] font-bold uppercase hover:bg-blue-700 transition-all flex items-center gap-1">
                             <Edit size={12} /> EDIT
                           </button>
+                          <button 
+                            onClick={() => printTeacherIDCard(t)}
+                            className="px-3 py-1 bg-amber-600 text-white rounded text-[10px] font-bold uppercase hover:bg-amber-700 transition-all flex items-center gap-1"
+                          >
+                            <IdCard size={12} /> KTA
+                          </button>
+                          <button 
+                            onClick={() => printLoginCard(t, 'GURU')}
+                            className="px-3 py-1 bg-indigo-600 text-white rounded text-[10px] font-bold uppercase hover:bg-indigo-700 transition-all flex items-center gap-1"
+                          >
+                            <IdCard size={12} /> LOGIN
+                          </button>
                           <button onClick={() => t.id && handleDelete(t.id, 'teachers')} className="px-3 py-1 bg-red-600 text-white rounded text-[10px] font-bold uppercase hover:bg-red-700 transition-all flex items-center gap-1">
                             <Trash2 size={12} /> HAPUS
                           </button>
@@ -2933,6 +4512,7 @@ export default function AdminDashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* Pagination Controls Data Guru */}
             {totalTeacherListPages > 1 && (
@@ -2950,7 +4530,7 @@ export default function AdminDashboard() {
                    </button>
                    {[...Array(totalTeacherListPages)].map((_, i) => (
                      <button 
-                      key={i}
+                      key={'pag-teacher-list-' + i}
                       onClick={() => setTeacherListPage(i + 1)}
                       className={cn(
                         "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -2975,8 +4555,9 @@ export default function AdminDashboard() {
 
           {activeTab === 'subject-teachers' && (
             <>
-            <table className="w-full text-left border-collapse min-w-[800px]">
-              <thead>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">No</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Guru</th>
@@ -2987,20 +4568,20 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedSubjectTeachers.map((t, idx) => (
-                  <tr key={t.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+                  <tr key={`subject-teacher-${t.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-gray-400 text-center">{(subjectTeacherPage - 1) * itemsPerPage + idx + 1}</td>
                     <td className="px-6 py-3 border-r border-gray-100 font-medium text-gray-900">{t.name}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">
                       <div className="flex flex-wrap gap-1">
                         {(Array.isArray(t.subjects) ? t.subjects : []).map((s, si) => (
-                          <span key={si} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded border border-blue-100">{s}</span>
+                          <span key={`${t.id}-subj-${si}`} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded border border-blue-100">{s}</span>
                         ))}
                       </div>
                     </td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">
                       <div className="flex flex-wrap gap-1">
                         {(Array.isArray(t.taughtClasses) ? t.taughtClasses : []).map((c, ci) => (
-                          <span key={ci} className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded border border-emerald-100">{c}</span>
+                          <span key={`${t.id}-class-${ci}`} className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded border border-emerald-100">{c}</span>
                         ))}
                       </div>
                     </td>
@@ -3025,6 +4606,7 @@ export default function AdminDashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* Pagination Controls Data Guru Mapel */}
             {totalSubjectTeacherPages > 1 && (
@@ -3042,7 +4624,7 @@ export default function AdminDashboard() {
                    </button>
                    {[...Array(totalSubjectTeacherPages)].map((_, i) => (
                      <button 
-                      key={i}
+                      key={'pag-kelas-' + i}
                       onClick={() => setSubjectTeacherPage(i + 1)}
                       className={cn(
                         "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -3067,8 +4649,9 @@ export default function AdminDashboard() {
 
           {activeTab === 'counselors' && (
             <>
-            <table className="w-full text-left border-collapse min-w-[800px]">
-              <thead>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">No</th>
                   <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Guru BK</th>
@@ -3079,14 +4662,14 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedCounselors.map((c, idx) => (
-                  <tr key={c.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+                  <tr key={`counselor-${c.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-gray-400 text-center">{(counselorPage - 1) * itemsPerPage + idx + 1}</td>
                     <td className="px-6 py-3 border-r border-gray-100 font-medium text-gray-900">{c.name}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">{c.nip}</td>
                     <td className="px-6 py-3 border-r border-gray-100 text-sm">
                        <div className="flex flex-wrap gap-1">
                           {c.managedClasses?.map((cl: string, cIdx: number) => (
-                            <span key={`${cl}-${cIdx}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded border border-purple-100">{cl}</span>
+                            <span key={`counselor-class-${c.id}-${cIdx}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded border border-purple-100">{cl}</span>
                           ))}
                        </div>
                     </td>
@@ -3116,6 +4699,7 @@ export default function AdminDashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* Pagination Controls Guru BK */}
             {totalCounselorPages > 1 && (
@@ -3133,7 +4717,7 @@ export default function AdminDashboard() {
                    </button>
                    {[...Array(totalCounselorPages)].map((_, i) => (
                      <button 
-                      key={i}
+                      key={'pag-counselor-ui-' + i}
                       onClick={() => setCounselorPage(i + 1)}
                       className={cn(
                         "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -3176,31 +4760,91 @@ export default function AdminDashboard() {
                     className="p-2 border border-gray-200 rounded-lg text-sm outline-none"
                   >
                     <option value="">Semua Kelas</option>
-                    {classes.map(cl => (
-                      <option key={cl.id} value={cl.name}>{cl.name}</option>
+                    {classes.map((cl, idx) => (
+                      <option key={`cl-opt-v2-${cl.id || idx}`} value={cl.name}>{cl.name}</option>
                     ))}
                   </select>
                 </div>
-                <button 
-                  onClick={() => {
-                    const ws = XLSX.utils.json_to_sheet(subjectAttendances.map(att => ({
-                      Tanggal: att.date,
-                      'Jam Ke': att.period,
-                      Kelas: att.className,
-                      'Mata Pelajaran': att.subjectName,
-                      'Guru Mapel': att.teacherName,
-                      'Nama Siswa': att.studentName,
-                      Status: att.status,
-                      Catatan: att.notes || '-'
-                    })));
-                    const wb = XLSX.utils.book_new();
-                    XLSX.utils.book_append_sheet(wb, ws, "Laporan Absensi Mapel");
-                    XLSX.writeFile(wb, `Laporan_Absensi_Mapel_${formatDate(new Date())}.xlsx`);
-                  }}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-green-700 transition-all shadow-sm"
-                >
-                  <Download size={18} /> Ekspor Excel
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                    <input 
+                      type="month" 
+                      value={filterMonth}
+                      onChange={(e) => setFilterMonth(e.target.value)}
+                      className="p-1.5 border border-gray-200 rounded text-[10px] outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button 
+                      onClick={() => {
+                        if (!filterMonth) return alert('Pilih bulan!');
+                        const filtered = subjectAttendances.filter(att => att.date.startsWith(filterMonth));
+                        const doc = new jsPDF();
+                        doc.text(`Laporan Bulanan Absensi Mapel - ${filterMonth}`, 14, 15);
+                        autoTable(doc, {
+                          startY: 20,
+                          head: [['Tanggal', 'Siswa', 'Kelas', 'Mapel', 'Jam', 'Status', 'Catatan']],
+                          body: filtered.map(a => [a.date, a.studentName, a.className, a.subjectName, a.period, a.status, a.notes || '-'])
+                        });
+                        doc.save(`Laporan_Bulanan_Mapel_${filterMonth}.pdf`);
+                      }}
+                      className="p-1.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+                    >
+                      PDF
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                    <select 
+                      value={filterSemester}
+                      onChange={(e) => setFilterSemester(e.target.value)}
+                      className="p-1.5 border border-gray-200 rounded text-[10px] outline-none"
+                    >
+                      <option value="">Semester</option>
+                      <option value="1">Ganjil (1)</option>
+                      <option value="2">Genap (2)</option>
+                    </select>
+                    <button 
+                      onClick={() => {
+                        if (!filterSemester) return alert('Pilih semester!');
+                        const filtered = subjectAttendances.filter(att => {
+                          const month = new Date(att.date).getMonth() + 1;
+                          return filterSemester === '1' ? (month >= 7 && month <= 12) : (month >= 1 && month <= 6);
+                        });
+                        const doc = new jsPDF();
+                        doc.text(`Laporan Semester Absensi Mapel - ${filterSemester === '1' ? 'Ganjil' : 'Genap'}`, 14, 15);
+                        autoTable(doc, {
+                          startY: 20,
+                          head: [['Tanggal', 'Siswa', 'Kelas', 'Mapel', 'Jam', 'Status', 'Catatan']],
+                          body: filtered.map(a => [a.date, a.studentName, a.className, a.subjectName, a.period, a.status, a.notes || '-'])
+                        });
+                        doc.save(`Laporan_Semester_Mapel_${filterSemester}.pdf`);
+                      }}
+                      className="p-1.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+                    >
+                      PDF
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={() => {
+                      const ws = XLSX.utils.json_to_sheet(subjectAttendances.map(att => ({
+                        Tanggal: att.date,
+                        'Jam Ke': att.period,
+                        Kelas: att.className,
+                        'Mata Pelajaran': att.subjectName,
+                        'Guru Mapel': att.teacherName,
+                        'Nama Siswa': att.studentName,
+                        Status: att.status,
+                        Catatan: att.notes || '-'
+                      })));
+                      const wb = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb, ws, "Laporan Absensi Mapel");
+                      XLSX.writeFile(wb, `Laporan_Absensi_Mapel_${formatDate(new Date())}.xlsx`);
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-green-700 transition-all shadow-sm"
+                  >
+                    <Download size={18} /> Excel
+                  </button>
+                </div>
               </div>
 
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
@@ -3219,7 +4863,7 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {paginatedInquiries.map((inq, idx) => (
-                      <tr key={inq.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+                      <tr key={`inq-row-v2-${inq.id || idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
                         <td className="px-6 py-4 border-r border-gray-100">
                           <p className="text-xs font-bold text-gray-900">{inq.createdAt?.toDate ? formatDate(inq.createdAt.toDate()) : '-'}</p>
                         </td>
@@ -3257,7 +4901,7 @@ export default function AdminDashboard() {
                     {paginatedInquiries.length === 0 && (
                       <tr>
                         <td colSpan={8} className="px-6 py-12 text-center text-gray-500 italic">
-                          Belum ada data pertanyaan ketidakhadiran.
+                          Belum ada data TANYA WALI KELAS.
                         </td>
                       </tr>
                     )}
@@ -3268,7 +4912,7 @@ export default function AdminDashboard() {
               {totalInquiryPages > 1 && (
                 <div className="p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                    Menampilkan {((subjectInquiryPage - 1) * itemsPerPage) + 1} - {Math.min(subjectInquiryPage * itemsPerPage, filteredInquiries.length)} dari {filteredInquiries.length} Laporan
+                    Menampilkan {((subjectInquiryPage - 1) * itemsPerPage) + 1} - {Math.min(subjectInquiryPage * itemsPerPage, filteredInquiries.length)} dari {filteredInquiries.length} TANYA WALI KELAS
                   </p>
                   <div className="flex items-center gap-2">
                     <button 
@@ -3280,7 +4924,7 @@ export default function AdminDashboard() {
                     </button>
                     {[...Array(totalInquiryPages)].map((_, i) => (
                       <button 
-                        key={i}
+                        key={'pag-inq-' + i}
                         onClick={() => setSubjectInquiryPage(i + 1)}
                         className={cn(
                           "w-8 h-8 rounded text-xs font-bold transition-all",
@@ -3330,13 +4974,17 @@ export default function AdminDashboard() {
                         const g = (s.gender || '').trim().toLowerCase();
                         return g === 'p' || g.startsWith('perem') || g === 'perempuan';
                       }).length;
-                      const waliKelas = teachers.find(t => (t.className || '').toLowerCase() === (cl.name || '').toLowerCase())?.name || '-';
-                      const guruBK = teachers.filter(t => t.status?.includes('Guru BK') && t.managedClasses?.some((mc: string) => mc.toLowerCase() === (cl.name || '').toLowerCase())).map(t => t.name).join(', ') || '-';
+                      const waliKelas = teachers.find(t => t.id === cl.waliKelasId)?.name || 
+                                         teachers.find(t => (t.className || '').toLowerCase().replace(/\s/g, '') === (cl.name || '').toLowerCase().replace(/\s/g, ''))?.name || '-';
+                      const guruBK = teachers.filter(t => t.status?.includes('Guru BK') && t.managedClasses?.some((mc: string) => mc.toLowerCase().replace(/\s/g, '') === (cl.name || '').toLowerCase().replace(/\s/g, ''))).map(t => t.name).join(', ') || '-';
                       
                       return (
-                        <tr key={cl.id || cl.name} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+                        <tr key={`class-row-${cl.id || cl.name}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
                           <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-gray-400 text-center">{(classPage - 1) * itemsPerPage + idx + 1}</td>
-                          <td className="px-6 py-3 border-r border-gray-100 font-bold text-gray-900">{cl.name}</td>
+                          <td className="px-6 py-3 border-r border-gray-100 font-bold text-gray-900 flex items-center gap-2">
+                            {cl.icon && React.createElement(getLucideIcon(cl.icon), { size: 16, className: cl.color || "text-gray-500" })}
+                            {cl.name}
+                          </td>
                           <td className="px-6 py-3 border-r border-gray-100 text-sm text-center font-bold">
                             {classStudents.length}
                           </td>
@@ -3415,79 +5063,169 @@ export default function AdminDashboard() {
         )}
 
           {activeTab === 'settings' && (
-            <div className="p-6 space-y-6">
-               <div>
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">Tahun Akademik</h3>
-                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                     {academicYears.map((y, idx) => (
-                       <div key={y.id || `academic-year-${idx}`} className={cn("p-4 rounded-xl border flex items-center justify-between group transition-all", y.active ? "bg-blue-50 border-blue-200 shadow-sm" : "bg-white border-gray-100")}>
-                          <div>
-                             <p className="font-bold text-gray-900">{y.year}</p>
-                             <p className="text-[10px] font-bold text-gray-400 uppercase">{y.active ? 'Status: Aktif' : 'Status: Non-Aktif'}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {!y.active && (
-                              <button 
-                                onClick={async () => {
-                                  // Confirm removed to prevent blocking in iframe
-                                  try {
-                                    setStatusMessage(`Sedang mengaktifkan ${y.year}...`);
-                                    
-                                    console.log('Activating year:', y.year, 'ID:', y.id);
-                                    // 1. Deactivate any currently active year
-                                    const activeYears = academicYears.filter(ay => ay.active);
-                                    console.log('Active years to deactivate:', activeYears);
-                                    for (const ay of activeYears) {
-                                      await updateDoc(doc(db, 'academicYears', ay.id), { active: false });
-                                    }
-                                    
-                                    // 2. Activate target year
-                                    console.log('Updating document:', y.id);
-                                    await updateDoc(doc(db, 'academicYears', y.id), { active: true });
-                                    console.log('Activation successful');
-                                    
-                                    await fetchData();
-                                    setStatusMessage("Tahun akademik berhasil diaktifkan.");
-                                    setTimeout(() => setStatusMessage(''), 3000);
-                                  } catch (err: any) {
-                                    console.error(err);
-                                    if (err.message?.includes('permission-denied')) {
-                                      setStatusMessage("Gagal: Izin ditolak. Pastikan Anonymous Auth aktif & aturan Firestore sudah dideploy.");
-                                    } else {
-                                      setStatusMessage("Gagal mengaktifkan tahun akademik.");
-                                    }
-                                    setTimeout(() => setStatusMessage(''), 5000);
-                                  }
-                                }}
-                                className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold rounded shadow-sm hover:bg-blue-700 transition-colors"
-                              >
-                                 AKTIFKAN
-                              </button>
-                            )}
-                            <button 
-                              onClick={() => handleDelete(y.id!, 'academicYears')}
-                              className={cn(
-                                "p-1.5 rounded transition-colors",
-                                y.active ? "text-blue-300 cursor-not-allowed" : "text-gray-400 hover:text-red-600 hover:bg-red-50"
-                              )}
-                              disabled={y.active}
-                              title={y.active ? "Tahun aktif tidak bisa dihapus" : "Hapus tahun akademik"}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                       </div>
-                     ))}
-                     <button 
-                      onClick={() => { setFormData({}); setShowAddModal(true); }}
-                      className="p-4 rounded-xl border border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 transition-all border-2 min-h-[82px]"
-                     >
-                        <Plus size={20} />
-                        <span className="text-[10px] font-bold uppercase mt-1">Tambah Tahun</span>
-                     </button>
-                  </div>
+            <div className="p-8 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+               {/* Navigation Bar */}
+               <div className="flex p-1 bg-gray-100 rounded-2xl w-fit">
+                 {[
+                   { id: 'umum', label: 'Umum & Konfigurasi' },
+                   { id: 'akademik', label: 'Akademik' },
+                   { id: 'data', label: 'Data & Keamanan' }
+                 ].map(tab => (
+                   <button
+                     key={tab.id}
+                     onClick={() => setSettingsSubTab(tab.id as any)}
+                     className={cn(
+                       "px-6 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all",
+                       settingsSubTab === tab.id 
+                         ? "bg-white text-gray-900 shadow-sm" 
+                         : "text-gray-500 hover:text-gray-900"
+                     )}
+                   >
+                     {tab.label}
+                   </button>
+                 ))}
                </div>
-               <LogoSettings />
+
+               {/* Content */}
+               {settingsSubTab === 'akademik' && (
+                 <div>
+                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-sky-50">
+                      <div className="p-2.5 bg-sky-100 text-sky-600 rounded-xl">
+                         <CalendarIcon size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Tahun Akademik</h3>
+                        <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-0.5">Kelola Periode Pembelajaran Aktif</p>
+                      </div>
+                    </div>
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                       {academicYears.map((y, idx) => (
+                         <div key={y.id || `academic-year-${idx}`} className={cn(
+                          "p-6 rounded-3xl border transition-all duration-300 flex flex-col gap-4 relative overflow-hidden",
+                          y.active 
+                            ? "bg-white border-sky-200 shadow-xl shadow-sky-100/50 ring-2 ring-sky-500/20" 
+                            : "bg-white border-gray-100 hover:border-sky-200 hover:shadow-lg hover:shadow-sky-100/30"
+                         )}>
+                            {y.active && (
+                              <div className="absolute top-0 right-0 p-1 bg-sky-600 text-white rounded-bl-xl">
+                                <CheckCircle2 size={12} />
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                              <div>
+                                 <p className={cn("text-xl font-black uppercase", y.active ? "text-sky-900 font-black" : "text-gray-700")}>{y.year}</p>
+                                 <div className="flex items-center gap-1.5 mt-1">
+                                    <div className={cn("w-1.5 h-1.5 rounded-full", y.active ? "bg-green-500 animate-pulse" : "bg-gray-300")} />
+                                    <p className={cn("text-[9px] font-black uppercase tracking-widest", y.active ? "text-green-600" : "text-gray-400")}>
+                                      {y.active ? 'STATUS: AKTIF' : 'STATUS: NON-AKTIF'}
+                                    </p>
+                                 </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {!y.active && (
+                                  <button 
+                                    onClick={async () => {
+                                      try {
+                                        setStatusMessage(`Sedang mengaktifkan ${y.year}...`);
+                                        const activeYears = academicYears.filter(ay => ay.active);
+                                        for (const ay of activeYears) {
+                                          await updateDoc(doc(db, 'academicYears', ay.id), { active: false });
+                                        }
+                                        await updateDoc(doc(db, 'academicYears', y.id), { active: true });
+                                        await fetchData();
+                                        setStatusMessage("Tahun akademik berhasil diaktifkan.");
+                                        setTimeout(() => setStatusMessage(''), 3000);
+                                      } catch (err: any) {
+                                        console.error(err);
+                                        setStatusMessage("Gagal mengaktifkan tahun akademik.");
+                                        setTimeout(() => setStatusMessage(''), 5000);
+                                      }
+                                    }}
+                                    className="px-4 py-2 bg-sky-600 text-white text-[10px] font-black rounded-xl shadow-lg shadow-sky-100 hover:bg-sky-700 transition-all active:scale-95 uppercase tracking-widest"
+                                  >
+                                     AKTIFKAN
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => handleDelete(y.id!, 'academicYears')}
+                                  className={cn(
+                                    "p-2.5 rounded-xl transition-all",
+                                    y.active ? "text-gray-200 cursor-not-allowed" : "text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-inner"
+                                  )}
+                                  disabled={y.active}
+                                  title={y.active ? "Tahun aktif tidak bisa dihapus" : "Hapus tahun akademik"}
+                                >
+                                  <Trash2 size={18} />
+                                </button>
+                              </div>
+                            </div>
+                         </div>
+                       ))}
+                       <button 
+                        onClick={() => { setFormData({}); setShowAddModal(true); }}
+                        className="p-6 rounded-3xl border-2 border-dashed border-sky-100 flex flex-col items-center justify-center text-sky-300 hover:bg-sky-50/50 hover:border-sky-300 hover:text-sky-400 transition-all min-h-[100px] group"
+                       >
+                          <Plus size={24} className="group-hover:scale-110 transition-transform" />
+                          <span className="text-[10px] font-black uppercase tracking-widest mt-2">Tambah Periode</span>
+                       </button>
+                    </div>
+                 </div>
+               )}
+
+               {settingsSubTab === 'umum' && (
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <LogoSettings />
+                    <WhatsAppSettings />
+                    <div className="md:col-span-2">
+                       <AttendanceConfig />
+                    </div>
+                  </div>
+               )}
+
+               {settingsSubTab === 'data' && (
+                 <div className="pt-6 border-t border-gray-100">
+                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-rose-50">
+                      <div className="p-2.5 bg-rose-100 text-rose-600 rounded-xl">
+                         <HardDrive size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Kesehatan & Keamanan Data</h3>
+                        <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mt-0.5">Cadangkan seluruh data sistem secara berkala</p>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-3xl border border-gray-100 hover:border-rose-200 transition-all group">
+                         <div className="flex items-start gap-4 mb-4">
+                            <div className="p-3 bg-rose-50 text-rose-500 rounded-2xl group-hover:bg-rose-100 transition-colors">
+                               <Database size={32} />
+                            </div>
+                            <div>
+                               <h4 className="font-extrabold text-gray-900 uppercase tracking-tight">Backup Data Keseluruhan</h4>
+                               <p className="text-[10px] font-bold text-gray-400 leading-relaxed uppercase mt-1">Unduh seluruh database (Siswa, Guru, Absensi, dll) dalam format JSON untuk dipindahkan ke Penyimpanan Lokal (Hard Disk) atau Flash Disk.</p>
+                            </div>
+                         </div>
+                         <button 
+                           onClick={backupData}
+                           className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 shadow-xl shadow-rose-100 hover:bg-rose-700 transition-all active:scale-[0.98]"
+                         >
+                           <Download size={18} />
+                           BACK UP DATA SEKARANG
+                         </button>
+                         <p className="text-[8px] font-black text-center text-gray-300 uppercase tracking-[0.2em] mt-4 italic">Direkomendasikan melakukan backup mingguan</p>
+                      </div>
+
+                      <div className="bg-gray-50/50 p-6 rounded-3xl border border-dashed border-gray-200 flex flex-col items-center justify-center text-center">
+                         <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-rose-500 mb-3 border border-rose-100 shadow-sm hover:bg-rose-50 transition-all cursor-pointer">
+                            <CloudUpload size={24} />
+                         </button>
+                         <input type="file" ref={fileInputRef} onChange={restoreData} accept=".json" className="hidden" />
+                         <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Restorasi Data</h4>
+                         <p className="text-[9px] font-bold text-gray-300 uppercase tracking-tighter mt-1 px-4 leading-relaxed">Klik untuk memilih file backup JSON dan mengembalikan data sistem.</p>
+                      </div>
+                    </div>
+                 </div>
+               )}
             </div>
           )}
 
@@ -3640,6 +5378,7 @@ export default function AdminDashboard() {
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Jenis / Alasan</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Ortu / WA</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Dokumen Pendukung</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Koordinat</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Status</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Alasan Status</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Aksi</th>
@@ -3647,8 +5386,8 @@ export default function AdminDashboard() {
                     </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedAttendanceDetail.length > 0 ? (
-                  paginatedAttendanceDetail.sort((a,b) => (a.studentName || '').localeCompare(b.studentName || '')).map((a, idx) => (
-                    <tr key={`${a.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+                  paginatedAttendanceDetail.map((a, idx) => (
+                    <tr key={`attendance-row-${a.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
                       <td className="px-6 py-3 border-r border-gray-100">
                          <p className="font-bold text-gray-900 text-sm">{a.studentName}</p>
                          <p className="text-[10px] font-bold text-blue-600 uppercase">{a.className}</p>
@@ -3680,24 +5419,39 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-6 py-3 border-r border-gray-100 text-center">
                         {a.documentUrl ? (
-                           <button 
-                             onClick={() => window.open(a.documentUrl, '_blank')}
-                             className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center gap-1 mx-auto"
-                           >
-                             <FileText size={14} /> LIHAT DOKUMEN
-                           </button>
+                           <div className="flex flex-col gap-1 items-center">
+                             <button 
+                               onClick={() => window.open(a.documentUrl, '_blank')}
+                               className="w-full px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center justify-center gap-1"
+                             >
+                               <FileText size={12} /> LIHAT
+                             </button>
+                             <button 
+                               onClick={() => downloadDocument(a.documentUrl, a.studentName, a.date, a.type)}
+                               className="w-full px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[9px] font-bold border border-emerald-100 hover:bg-emerald-100 transition-all flex items-center justify-center gap-1"
+                             >
+                               <Download size={12} /> UNDUH
+                             </button>
+                           </div>
                          ) : (
                            <span className="text-[10px] text-gray-400 italic">Tidak ada dokumen</span>
                          )}
+                      </td>
+                      <td className="px-6 py-3 border-r border-gray-100 text-center">
+                        {a.location ? (
+                          <a href={`https://www.google.com/maps?q=${a.location.latitude},${a.location.longitude}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline flex items-center justify-center gap-1 text-[10px]">
+                             <MapPin size={12} /> Peta
+                          </a>
+                        ) : '-'}
                       </td>
                       <td className="px-6 py-3 border-r border-gray-100 text-center">
                          <span className={cn(
                            "px-2 py-1 rounded text-[10px] font-bold uppercase",
                            a.status === 'Approved' ? "bg-green-100 text-green-700" : 
                            a.status === 'Rejected' ? "bg-red-100 text-red-700" : 
-                           "bg-yellow-100 text-yellow-700"
+                           "bg-amber-100 text-amber-700 font-black animate-pulse"
                          )}>
-                           {a.status || 'Pending'}
+                           {a.status === 'Approved' ? 'DITERIMA' : a.status === 'Rejected' ? 'DITOLAK' : 'PENDING'}
                          </span>
                       </td>
                       <td className="px-6 py-3 border-r border-gray-100">
@@ -3817,20 +5571,65 @@ export default function AdminDashboard() {
                 >
                   <option value="">-- Pilih Kelas --</option>
                   {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => (
-                    <option key={cl.id || `print-class-${idx}`} value={cl.name}>{cl.name}</option>
+                    <option key={`${cl.id || `print-class-${cl.name}`}-${idx}`} value={cl.name}>{cl.name}</option>
                   ))}
                 </select>
               </div>
               <button 
                 onClick={() => {
                   if (!printClass) return;
-                  printLoginCards(printClass);
+                  printLoginCards(printClass, 'SISWA');
                   setShowPrintModal(false);
                 }}
                 disabled={!printClass}
                 className="w-full py-3 bg-amber-600 text-white rounded-xl font-bold uppercase tracking-widest text-xs hover:bg-amber-700 transition-all disabled:opacity-50"
               >
                 Unduh PDF Kartu Login
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Print Parent Login Cards Modal */}
+      {showParentPrintModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
+          >
+            <div className="p-6 bg-orange-600 text-white flex items-center justify-between">
+              <h3 className="font-bold text-lg">Cetak Kartu Login Wali</h3>
+              <button onClick={() => setShowParentPrintModal(false)}><X size={24} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Pilih kelas untuk mengunduh PDF kartu login orang tua/wali. Kartu ini berisi NIS yang digunakan sebagai username untuk memantau absensi siswa.
+              </p>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Pilih Kelas</label>
+                <select 
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-orange-500 text-sm"
+                  value={parentPrintClass}
+                  onChange={(e) => setParentPrintClass(e.target.value)}
+                >
+                  <option value="">-- Pilih Kelas --</option>
+                  {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => (
+                    <option key={`${cl.id || `parent-print-class-${cl.name}`}-${idx}`} value={cl.name}>{cl.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button 
+                onClick={() => {
+                  if (!parentPrintClass) return;
+                  printLoginCards(parentPrintClass, 'ORTU');
+                  setShowParentPrintModal(false);
+                }}
+                disabled={!parentPrintClass}
+                className="w-full py-3 bg-orange-600 text-white rounded-xl font-bold uppercase tracking-widest text-xs hover:bg-orange-700 transition-all disabled:opacity-50"
+              >
+                Unduh PDF Kartu Login Wali
               </button>
             </div>
           </motion.div>
@@ -3846,8 +5645,10 @@ export default function AdminDashboard() {
            >
               <div className="p-6 bg-blue-600 text-white flex items-center justify-between">
                  <h3 className="font-bold text-lg">
-                    {formData.id ? 'Edit' : 'Tambah'} {
-                      activeTab === 'settings' ? 'Tahun Akademik' : activeTab.slice(0, -1)
+                    {formData.id ? 'Edit' : 'Atur Tampilan'} {
+                      activeTab === 'settings' ? 'Tahun Akademik' :
+                      activeTab === 'classes' ? 'Kelas' :
+                      activeTab.slice(0, -1)
                     }
                  </h3>
                  <button onClick={() => setShowAddModal(false)}><X size={24} /></button>
@@ -3892,9 +5693,10 @@ export default function AdminDashboard() {
                       <input type="text" placeholder="Nama Guru" required className="w-full p-3 border border-gray-100 rounded-xl" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
                       <input type="text" placeholder="NIP" required className="w-full p-3 border border-gray-100 rounded-xl" value={formData.nip || ''} onChange={e => setFormData({...formData, nip: e.target.value})} />
                       <input type="text" placeholder="Kata Sandi" required className="w-full p-3 border border-gray-100 rounded-xl" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} />
+                      <input type="text" placeholder="Nomor WhatsApp" className="w-full p-3 border border-gray-100 rounded-xl" value={formData.phoneNumber || ''} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} />
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Status (Centang semua yang sesuai)</label>
                       <div className="grid grid-cols-2 gap-2 text-sm">
-                        {['Kepala Sekolah', 'Waka', 'Wali Kelas', 'Guru Mata Pelajaran', 'Guru BK', 'Lainnya'].map(s => (
+                        {['Kepala Sekolah', 'Waka', 'Wali Kelas', 'Guru Mapel', 'Guru BK', 'Lainnya'].map(s => (
                           <label key={s} className="flex items-center gap-2">
                             <input 
                               type="checkbox" 
@@ -3913,7 +5715,57 @@ export default function AdminDashboard() {
                  )}
                  {activeTab === 'classes' && (
                     <>
-                      <input type="text" placeholder="Nama Kelas" required className="w-full p-3 border border-gray-100 rounded-xl" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+                      <select 
+                        required
+                        className="w-full p-3 border border-gray-100 rounded-xl outline-none"
+                        value={formData.name || ''}
+                        onChange={e => {
+                          const selectedClassNameInput = e.target.value;
+                          const selectedClass = classes.find(c => c.name === selectedClassNameInput);
+                          console.log("Class Selected:", selectedClassNameInput, "Found Class:", selectedClass);
+
+                          setFormData({
+                            ...formData, 
+                            name: selectedClassNameInput,
+                            waliKelasId: selectedClass?.waliKelasId || '',
+                            color: selectedClass?.color || '',
+                            icon: selectedClass?.icon || '',
+                            id: selectedClass?.id || formData.id
+                          });
+                        }}
+                      >
+                         <option value="">-- Pilih Kelas --</option>
+                         {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => <option key={`class-select-${cl.id || idx}`} value={cl.name}>{cl.name}</option>)}
+                      </select>
+                      <select 
+                        className="w-full p-3 border border-gray-100 rounded-xl outline-none"
+                        value={formData.waliKelasId || ''}
+                        onChange={e => setFormData({...formData, waliKelasId: e.target.value})}
+                      >
+                         <option value="">-- Pilih Wali Kelas --</option>
+                         {teachers.map((t, idx) => <option key={`teacher-${t.id || ''}-${idx}`} value={t.id}>{t.name}</option>)}
+                      </select>
+                      {formData.waliKelasId && (
+                        <div className="text-xs font-bold text-blue-600 mt-1 pl-2">
+                            Wali Kelas Terpilih: {teachers.find(t => t.id === formData.waliKelasId)?.name || 'Tidak Ditemukan'}
+                        </div>
+                      )}
+                      <select 
+                        className="w-full p-3 border border-gray-100 rounded-xl outline-none"
+                        value={formData.color || ''}
+                        onChange={e => setFormData({...formData, color: e.target.value})}
+                      >
+                         <option value="">-- Pilih Warna --</option>
+                         {CLASS_COLORS.map(c => <option key={c} value={c}>{c.replace('text-', '')}</option>)}
+                      </select>
+                      <select 
+                        className="w-full p-3 border border-gray-100 rounded-xl outline-none"
+                        value={formData.icon || ''}
+                        onChange={e => setFormData({...formData, icon: e.target.value})}
+                      >
+                         <option value="">-- Pilih Ikon --</option>
+                         {CLASS_ICONS.map(i => <option key={i} value={i}>{i}</option>)}
+                      </select>
                     </>
                  )}
                  {activeTab === 'subject-teachers' && (
@@ -3956,21 +5808,21 @@ export default function AdminDashboard() {
                               onChange={e => setFormData({...formData, className: e.target.value})}
                             >
                               <option value="">-- Pilih Kelas Wali --</option>
-                              {classes.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map(cl => <option key={cl.id} value={cl.name}>{cl.name}</option>)}
+                              {classes.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={`${cl.id || 'class'}-${i}`} value={cl.name}>{cl.name}</option>)}
                             </select>
                           </div>
                         )}
                         <div 
                           onClick={() => {
                             const s = formData.status || [];
-                            setFormData({...formData, status: s.includes('Guru Mata Pelajaran') ? s.filter((x:any) => x !== 'Guru Mata Pelajaran') : [...s, 'Guru Mata Pelajaran']});
+                            setFormData({...formData, status: s.includes('Guru Mapel') ? s.filter((x:any) => x !== 'Guru Mapel') : [...s, 'Guru Mapel']});
                           }}
-                          className={cn("p-4 rounded-xl border-2 flex items-center justify-between cursor-pointer transition-all", formData.status?.includes('Guru Mata Pelajaran') ? "border-blue-600 bg-blue-50" : "border-gray-100 bg-white")}
+                          className={cn("p-4 rounded-xl border-2 flex items-center justify-between cursor-pointer transition-all", formData.status?.includes('Guru Mapel') ? "border-blue-600 bg-blue-50" : "border-gray-100 bg-white")}
                         >
-                          <span className="text-sm font-bold">Guru Mata Pelajaran</span>
-                          {formData.status?.includes('Guru Mata Pelajaran') && <CheckCircle2 size={18} className="text-blue-600" />}
+                          <span className="text-sm font-bold">Guru Mapel</span>
+                          {formData.status?.includes('Guru Mapel') && <CheckCircle2 size={18} className="text-blue-600" />}
                         </div>
-                        {formData.status?.includes('Guru Mata Pelajaran') && (
+                        {formData.status?.includes('Guru Mapel') && (
                           <div className="px-1 space-y-2">
                             <input placeholder="Bidang Studi (misal: MTK, IPA)" className="w-full p-2.5 border border-gray-100 rounded-lg text-sm outline-none" value={formData.subjects || ''} onChange={e => setFormData({...formData, subjects: e.target.value})} />
                             <input placeholder="Kelas Ampuan (misal: 7A, 7B)" className="w-full p-2.5 border border-gray-100 rounded-lg text-sm outline-none" value={formData.taughtClasses || ''} onChange={e => setFormData({...formData, taughtClasses: e.target.value})} />
@@ -4165,6 +6017,47 @@ export default function AdminDashboard() {
       )}
 
       {/* Confirm Dialog */}
+      {/* Student Detail Modal */}
+      {showStudentDetailModal && selectedStudentForDetail && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
+          >
+            <div className="p-6 bg-blue-600 text-white flex items-center justify-between">
+              <h3 className="font-bold text-lg">Riwayat Absensi: {selectedStudentForDetail.name}</h3>
+              <button onClick={() => setShowStudentDetailModal(false)} className="hover:bg-white/20 p-2 rounded-lg transition-colors text-white">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <div className="space-y-4">
+                {studentAttendanceHistory.length > 0 ? (
+                  studentAttendanceHistory.map((att, idx) => (
+                    <div key={`std-detail-att-${att.id || idx}-${idx}`} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-gray-900">{formatDate(new Date(att.date))}</p>
+                        <p className="text-sm text-gray-500">{att.reason}</p>
+                      </div>
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-xs font-bold uppercase",
+                        att.type === 'Sakit' ? "bg-amber-100 text-amber-600" :
+                        att.type === 'Izin' ? "bg-blue-100 text-blue-600" : "bg-purple-100 text-purple-600"
+                      )}>
+                        {att.type}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-gray-500 py-10">Belum ada riwayat absensi.</p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {confirmDialog.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-xl p-8 max-w-sm w-full mx-auto text-center">

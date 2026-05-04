@@ -59,7 +59,6 @@ export default function SemesterAttendanceRecapTable({ students, attendance, cla
   const recapData = useMemo(() => {
     return filteredStudents.map(student => {
       const studentAtt = attendance.filter(a => {
-        if (a.status === 'Pending') return false;
         const dateObj = new Date(a.date);
         return a.studentId === student.id && 
                currentMonths.includes((dateObj.getMonth() + 1).toString());
@@ -253,7 +252,7 @@ export default function SemesterAttendanceRecapTable({ students, attendance, cla
           <tbody>
             {currentData.length > 0 ? (
               currentData.map((student, index) => (
-                <tr key={student.id} className="hover:bg-gray-50">
+                <tr key={student.id ? `${student.id}-${index}` : `stud-${index}`} className="hover:bg-gray-50">
                   <td className="p-2 border border-gray-200 text-xs text-center">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                   <td className="p-2 border border-gray-200 text-xs">{student.nis}</td>
                   <td className="p-2 border border-gray-200 text-xs font-medium text-gray-900">{student.name}</td>

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { AttendanceRecord } from '../types';
 
 interface AttendanceTrendChartProps {
@@ -23,20 +23,20 @@ export default function AttendanceTrendChart({ attendance }: AttendanceTrendChar
     }, [attendance]);
 
     return (
-        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-            <h3 className="text-sm font-bold text-gray-800 mb-6 uppercase tracking-wider">Tren Ketidakhadiran Harian</h3>
-            <ResponsiveContainer width="100%" height={350}>
-                <BarChart data={data}>
+        <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-lg h-full">
+            <h3 className="text-xs font-bold text-gray-800 mb-2 uppercase tracking-wider">Tren Ketidakhadiran Harian</h3>
+            <ResponsiveContainer width="100%" height={150}>
+                <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="Sakit" stackId="a" fill="#3b82f6" />
-                    <Bar dataKey="Izin" stackId="a" fill="#10b981" />
-                    <Bar dataKey="Dispensasi" stackId="a" fill="#f59e0b" />
-                    <Bar dataKey="Alpa" stackId="a" fill="#ef4444" />
-                </BarChart>
+                    <XAxis dataKey="date" tick={{ fontSize: 8 }} />
+                    <YAxis tick={{ fontSize: 8 }} />
+                    <Tooltip contentStyle={{ fontSize: '10px' }} />
+                    <Legend wrapperStyle={{ fontSize: '10px' }} iconSize={8} />
+                    <Line type="monotone" dataKey="Sakit" stroke="#3b82f6" strokeWidth={2} dot={{r: 2}} />
+                    <Line type="monotone" dataKey="Izin" stroke="#10b981" strokeWidth={2} dot={{r: 2}} />
+                    <Line type="monotone" dataKey="Dispensasi" stroke="#f59e0b" strokeWidth={2} dot={{r: 2}} />
+                    <Line type="monotone" dataKey="Alpa" stroke="#ef4444" strokeWidth={2} dot={{r: 2}} />
+                </LineChart>
             </ResponsiveContainer>
         </div>
     );

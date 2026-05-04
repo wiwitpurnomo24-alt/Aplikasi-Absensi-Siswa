@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { collection, query, limit, getDocs, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { SchoolData } from '../types';
-import { Save, Building2, MapPin, User, FileText, CheckCircle2 } from 'lucide-react';
+import { Save, Building2, MapPin, User, FileText, CheckCircle2, Image as ImageIcon, RefreshCw } from 'lucide-react';
 
 export default function SchoolDataSettings() {
   const [loading, setLoading] = useState(true);
@@ -16,7 +17,8 @@ export default function SchoolDataSettings() {
     kota: '',
     kepalaSekolah: '',
     nipKepalaSekolah: '',
-    logoUrl: ''
+    logoUrl: '',
+    schoolLogoUrl: ''
   });
 
   useEffect(() => {
@@ -62,148 +64,179 @@ export default function SchoolDataSettings() {
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="p-8 border-b border-gray-100 bg-gray-50/50">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-              <Building2 size={20} />
+    <div className="max-w-2xl mx-auto p-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="bg-white rounded-2xl shadow-lg shadow-sky-100/50 border border-sky-100 overflow-hidden mb-4 border-t-4 border-t-sky-600">
+        <div className="p-3 border-b border-sky-50 bg-white">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-sky-50 text-sky-600 rounded-lg border border-sky-100">
+              <Building2 size={16} />
             </div>
-            <h3 className="text-xl font-bold text-gray-900">Data Sekolah</h3>
+            <div>
+              <h3 className="text-sm font-black text-gray-800 uppercase tracking-tight">Identitas Sekolah</h3>
+              <p className="text-gray-400 text-[8px] font-bold uppercase tracking-widest leading-none">Konfigurasi Kop Laporan Resmi</p>
+            </div>
           </div>
-          <p className="text-sm text-gray-500">Konfigurasi informasi sekolah untuk kop surat dan laporan resmi</p>
         </div>
 
-        <form onSubmit={handleSave} className="p-8 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <Building2 size={16} className="text-gray-400" />
-                Nama Pemerintah Daerah
+        <form onSubmit={handleSave} className="p-4 space-y-4 bg-white">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+            <div className="group space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                <Building2 size={10} />
+                Pemerintah Daerah
               </label>
               <input
                 type="text"
                 required
-                placeholder="Contoh: PEMERINTAH PROVINSI JAWA TENGAH"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                placeholder="PEMERINTAH KOTA / KABUPATEN..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-bold text-gray-800 placeholder:text-gray-300 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all"
                 value={schoolData.pemda}
                 onChange={e => setSchoolData({ ...schoolData, pemda: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <FileText size={16} className="text-gray-400" />
-                Nama Dinas
+            <div className="group space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                <FileText size={10} />
+                Instansi / Dinas
               </label>
               <input
                 type="text"
                 required
-                placeholder="Contoh: DINAS PENDIDIKAN DAN KEBUDAYAAN"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                placeholder="DINAS PENDIDIKAN DAN KEBUDAYAAN..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-bold text-gray-800 placeholder:text-gray-300 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all"
                 value={schoolData.dinas}
                 onChange={e => setSchoolData({ ...schoolData, dinas: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <Building2 size={16} className="text-gray-400" />
+            <div className="group space-y-1 md:col-span-2">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                <Building2 size={10} />
                 Nama Sekolah
               </label>
               <input
                 type="text"
                 required
-                placeholder="Contoh: SMA NEGERI 1 KOTA"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all font-bold"
+                placeholder="NAMA SEKOLAH ANDA..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-black text-sky-900 placeholder:text-sky-200 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all"
                 value={schoolData.sekolah}
                 onChange={e => setSchoolData({ ...schoolData, sekolah: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <MapPin size={16} className="text-gray-400" />
+            <div className="group space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                <MapPin size={10} />
                 Kota / Kabupaten
               </label>
               <input
                 type="text"
                 required
-                placeholder="Contoh: SEMARANG"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                placeholder="KOTA LOKASI SEKOLAH..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-bold text-gray-800 placeholder:text-gray-300 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all"
                 value={schoolData.kota}
                 onChange={e => setSchoolData({ ...schoolData, kota: e.target.value })}
               />
             </div>
+
+            <div className="group space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                <MapPin size={10} />
+                Alamat Lengkap
+              </label>
+              <textarea
+                required
+                rows={1}
+                placeholder="Jl. Pendidikan No. 01..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-medium text-gray-800 placeholder:text-gray-300 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all resize-none"
+                value={schoolData.alamat}
+                onChange={e => setSchoolData({ ...schoolData, alamat: e.target.value })}
+              />
+            </div>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <MapPin size={16} className="text-gray-400" />
-              Alamat Lengkap
-            </label>
-            <textarea
-              required
-              rows={2}
-              placeholder="Jl. Pendidikan No. 123, Kelurahan, Kecamatan, Kode Pos"
-              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all resize-none"
-              value={schoolData.alamat}
-              onChange={e => setSchoolData({ ...schoolData, alamat: e.target.value })}
-            />
+          <div className="p-3 bg-sky-50/30 border border-sky-100 rounded-xl group hover:border-sky-300 transition-all">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg border-2 border-dashed border-sky-200 flex items-center justify-center overflow-hidden bg-white shrink-0 group-hover:border-sky-400 transition-all">
+                {schoolData.schoolLogoUrl ? (
+                  <img src={schoolData.schoolLogoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
+                ) : (
+                  <ImageIcon size={16} className="text-sky-200" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block truncate text-[9px] font-bold text-sky-500 hover:text-sky-700 cursor-pointer">
+                  Klik untuk ubah Logo Unit
+                  <input
+                    type="file"
+                    accept="image/png, image/jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                         if (file.size > 500000) return alert('Max 500KB');
+                         const reader = new FileReader();
+                         reader.onloadend = () => setSchoolData({ ...schoolData, schoolLogoUrl: reader.result as string });
+                         reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+                <p className="text-[7px] text-sky-400 font-bold uppercase tracking-wider">Format PNG/JPG (Maks 500KB)</p>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-gray-100">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <User size={16} className="text-gray-400" />
-                Nama Kepala Sekolah
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-sky-50">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 pl-1">
+                <User size={10} />
+                Kepala Sekolah
               </label>
               <input
                 type="text"
                 required
-                placeholder="Nama Lengkap Beserta Gelar"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                placeholder="NAMA LENGKAP..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-bold text-gray-800 focus:ring-2 focus:ring-sky-100 outline-none transition-all"
                 value={schoolData.kepalaSekolah}
                 onChange={e => setSchoolData({ ...schoolData, kepalaSekolah: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <FileText size={16} className="text-gray-400" />
-                NIP Kepala Sekolah
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 pl-1">
+                <FileText size={10} />
+                NIP
               </label>
               <input
                 type="text"
                 required
-                placeholder="19xxxxxxxxxxxxxxx"
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                placeholder="19XXXXXXXX..."
+                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-bold text-gray-800 focus:ring-2 focus:ring-sky-100 outline-none transition-all"
                 value={schoolData.nipKepalaSekolah}
                 onChange={e => setSchoolData({ ...schoolData, nipKepalaSekolah: e.target.value })}
               />
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-6">
-            {success && (
-              <span className="text-green-600 text-sm font-medium flex items-center gap-1">
-                <CheckCircle2 size={16} />
-                Berhasil disimpan
-              </span>
-            )}
+          <div className="flex items-center justify-between pt-2">
+            <div className="text-[8px] font-bold text-sky-300 uppercase tracking-widest leading-none">
+              * Pastikan data sesuai SK terakhir
+            </div>
             <button
               type="submit"
               disabled={saving}
-              className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all flex items-center gap-2 shadow-lg shadow-blue-200 disabled:opacity-50"
+              className="px-4 py-2 bg-sky-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-sky-700 transition-all flex items-center gap-2 shadow-lg shadow-sky-100 disabled:opacity-50"
             >
-              <Save size={18} />
-              {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+              {saving ? <RefreshCw className="animate-spin" size={14} /> : <Save size={14} />}
+              {saving ? 'PROSES' : 'SIMPAN'}
             </button>
           </div>
         </form>

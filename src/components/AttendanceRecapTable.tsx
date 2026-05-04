@@ -85,7 +85,6 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
   const recapData = useMemo(() => {
     return filteredStudents.map(student => {
       const studentAtt = attendance.filter(a => {
-        if (a.status === 'Pending') return false; // Maybe only count approved/handled? Wait, if it exists we count unless we have a specific rule. Let's count all or just Approved. Since previous logic didn't filter by status, we won't here, except maybe Pending.
         const dateObj = new Date(a.date);
         return a.studentId === student.id && 
                (dateObj.getMonth() + 1).toString() === selectedMonth;
@@ -333,7 +332,7 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
           <tbody>
             {currentData.length > 0 ? (
               currentData.map((student, index) => (
-                <tr key={student.id} className="hover:bg-gray-50">
+                <tr key={student.id ? `${student.id}-${index}` : `stud-${index}`} className="hover:bg-gray-50">
                   <td className="p-2 border border-gray-200 text-xs text-center">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                   <td className="p-2 border border-gray-200 text-xs">{student.nis}</td>
                   <td className="p-2 border border-gray-200 text-xs font-medium text-gray-900">{student.name}</td>
@@ -341,7 +340,7 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
                   {daysArray.map(day => {
                     const code = student.dayMap[day];
                     return (
-                      <td key={day} className={`p-1 border border-gray-200 text-[10px] text-center font-bold
+                      <td key={`${student.id || student.nis || index}-day-${day}`} className={`p-1 border border-gray-200 text-[10px] text-center font-bold
                         ${code === 'S' ? 'bg-orange-100 text-orange-700' : ''}
                         ${code === 'I' ? 'bg-yellow-100 text-yellow-700' : ''}
                         ${code === 'A' ? 'bg-red-100 text-red-700' : ''}
@@ -366,6 +365,17 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Legend */}
+      <div className="p-4 bg-gray-50 border-t border-gray-200">
+        <p className="text-xs font-bold text-gray-600 mb-2">Keterangan:</p>
+        <div className="flex flex-wrap gap-4">
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-orange-100 border border-orange-200 rounded"></span><span className="text-[10px] text-gray-600">S = Sakit</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-yellow-100 border border-yellow-200 rounded"></span><span className="text-[10px] text-gray-600">I = Izin</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-red-100 border border-red-200 rounded"></span><span className="text-[10px] text-gray-600">A = Alpa</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-purple-100 border border-purple-200 rounded"></span><span className="text-[10px] text-gray-600">D = Dispensasi</span></div>
+        </div>
       </div>
 
       {totalPages > 1 && (

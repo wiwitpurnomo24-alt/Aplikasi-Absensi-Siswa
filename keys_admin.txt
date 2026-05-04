@@ -1,0 +1,44 @@
+2571:                        key={notif.id ? `${notif.id}-${i}` : `notif-${i}`} 
+2686:              <div key={stat.label} className={cn("relative overflow-hidden rounded-lg shadow-sm text-white", stat.bg)}>
+2910:                   <div key={`${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
+2966:                       <tr key={`pending-ov-${a.id}-${idx}`} className="hover:bg-amber-50/30 transition-colors">
+3116:                          <tr key={t.id ? `role-row-${t.id}` : `role-row-${idx}`} className="hover:bg-indigo-50/10 transition-colors">
+3129:                                          <span key={`sub-${si}`} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded border border-blue-100 mr-1 uppercase">{s}</span>
+3156:                                        <span key={`bk-${mci}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-black rounded border border-purple-100 uppercase">{mc}</span>
+3260:                          {[...classes].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={cl.id ? `${cl.id}-${i}` : `class-${i}`} value={cl.name}>{cl.name}</option>)}
+3282:                                    key={s.id ? `off-cand-${s.id}` : `off-cand-${s.nis || s.name}`} 
+3410:                          <tr key={o.id ? `officer-${o.id}` : `officer-${idx}`} className={cn("hover:bg-blue-50/20 transition-colors", selectedOfficers.includes(o.id!) && "bg-blue-50")}>
+3492:                          key={'pag-officer-' + i}
+3566:              <div key={`${cls}-${idx}`} className="p-4 rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all group">
+3654:                   <option key={cl.id || `class-filter-${idx}`} value={cl.name}>{cl.name}</option>
+4103:                     <option key={cl.id || `filter-class-${cl.name}`} value={cl.name}>{cl.name}</option>
+4262:                  <tr key={`student-${s.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", selectedStudents.includes(s.id) && "bg-blue-50/50", s.nis && duplicateNises.includes(s.nis) && "bg-red-50 border-l-4 border-l-red-500")}>
+4337:                      key={'pag-student-' + i}
+4384:                  <tr key={`wali-kelas-${t.id}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
+4442:                      key={'pag-walikelas-' + i}
+4490:                  <tr key={`teacher-list-${t.id}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.id && selectedTeachers.includes(t.id) && "bg-blue-50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
+4555:                      key={'pag-teacher-list-' + i}
+4592:                  <tr key={`subject-teacher-${t.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50", t.nip && duplicateNips.includes(t.nip) && "bg-red-50 border-l-4 border-l-red-500")}>
+4598:                          <span key={si} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded border border-blue-100">{s}</span>
+4605:                          <span key={ci} className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded border border-emerald-100">{c}</span>
+4647:                      key={'pag-kelas-' + i}
+4684:                  <tr key={`counselor-${c.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+4691:                            <span key={`${cl}-${cIdx}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded border border-purple-100">{cl}</span>
+4738:                      key={'pag-attendance-' + i}
+4782:                      <option key={cl.id ? `cl-opt-${cl.id}` : `cl-opt-${cl.name}`} value={cl.name}>{cl.name}</option>
+4824:                      <tr key={inq.id} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+4885:                        key={'pag-inq-' + i}
+4940:                        <tr key={cl.id || cl.name} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+5033:                     key={tab.id}
+5061:                         <div key={y.id || `academic-year-${idx}`} className={cn(
+5275:                        <tr key={`summary-${data.className}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+5348:                    <tr key={`${a.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
+5532:                    <option key={cl.id || `print-class-${cl.name}`} value={cl.name}>{cl.name}</option>
+5577:                    <option key={cl.id || `parent-print-class-${cl.name}`} value={cl.name}>{cl.name}</option>
+5658:                          <label key={s} className="flex items-center gap-2">
+5696:                         {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => <option key={`class-select-${cl.id || idx}`} value={cl.name}>{cl.name}</option>)}
+5704:                         {teachers.map((t, idx) => <option key={`teacher-${t.id || ''}-${idx}`} value={t.id}>{t.name}</option>)}
+5717:                         {CLASS_COLORS.map(c => <option key={c} value={c}>{c.replace('text-', '')}</option>)}
+5725:                         {CLASS_ICONS.map(i => <option key={i} value={i}>{i}</option>)}
+5769:                              {classes.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={`${cl.id || 'class'}-${i}`} value={cl.name}>{cl.name}</option>)}
+5996:                    <div key={att.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex justify-between items-center">

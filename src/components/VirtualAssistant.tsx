@@ -7,8 +7,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export default function VirtualAssistant() {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([
-    { role: 'assistant', content: 'Halo! Saya Asisten Absensi Sekolah. Ada yang bisa saya bantu terkait penggunaan aplikasi ini?' }
+  const [messages, setMessages] = useState<{ id: string, role: 'user' | 'assistant', content: string }[]>([
+    { id: 'init-msg', role: 'assistant', content: 'Halo! Saya Asisten Absensi Sekolah. Ada yang bisa saya bantu terkait penggunaan aplikasi ini?' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -25,7 +25,8 @@ export default function VirtualAssistant() {
 
     const userMessage = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    const newUserMessage = { id: crypto.randomUUID(), role: 'user' as const, content: userMessage };
+    setMessages(prev => [...prev, newUserMessage]);
     setIsLoading(true);
 
     try {
@@ -43,10 +44,10 @@ export default function VirtualAssistant() {
 
       const result = await chat.sendMessage(userMessage);
       const assistantMessage = result.response.text() || "Maaf, saya tidak dapat merespons saat ini.";
-      setMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: assistantMessage }]);
     } catch (error) {
       console.error("Gemini Error:", error);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Maaf, terjadi kesalahan pada sistem asisten virtual." }]);
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: "Maaf, terjadi kesalahan pada sistem asisten virtual." }]);
     } finally {
       setIsLoading(false);
     }
@@ -91,8 +92,8 @@ export default function VirtualAssistant() {
 
             {/* Messages */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-              {messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {messages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${
                     msg.role === 'user' 
                       ? 'bg-blue-600 text-white rounded-br-none' 

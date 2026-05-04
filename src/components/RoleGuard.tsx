@@ -18,7 +18,7 @@ export default function RoleGuard({ children, allowedRoles }: RoleGuardProps) {
 
   if (!allowedRoles.includes(user.role)) {
     // Redirect to their own dashboard if they don't have access
-    const defaultPath = user.role === 'ADMIN' || user.role === 'KEPALA_SEKOLAH' || user.role === 'WAKIL_KEPALA_SEKOLAH' || user.role === 'COUNSELOR' ? '/admin' : user.role === 'TEACHER' ? '/teacher' : user.role === 'STUDENT' ? '/attendance-officer' : '/parent';
+    const defaultPath = user.role === 'ADMIN' || user.role === 'KEPALA_SEKOLAH' || user.role === 'WAKIL_KEPALA_SEKOLAH' || user.role === 'COUNSELOR' ? '/admin' : user.role === 'TEACHER' ? '/teacher' : user.role === 'PETUGAS_ABSEN_KELAS' ? '/attendance-officer' : user.role === 'SUBJECT_TEACHER' ? '/subject-teacher' : '/parent';
     return <Navigate to={defaultPath} replace />;
   }
 

@@ -139,7 +139,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
     const body = filteredAttendance.map((a, i) => [
       a.date,
       a.type.toUpperCase(),
-      a.status,
+      a.status === 'Approved' ? 'Diterima' : a.status === 'Rejected' ? 'Ditolak' : 'Diterima',
       a.reason || '-',
       a.teacherName || '-'
     ]);
@@ -174,7 +174,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
     const data = filteredAttendance.map(a => ({
       'Tanggal': a.date,
       'Jenis': a.type.toUpperCase(),
-      'Status Validasi': a.status,
+      'Status Validasi': a.status === 'Approved' ? 'Diterima' : a.status === 'Rejected' ? 'Ditolak' : 'Diterima',
       'Alasan': a.reason || '-',
       'Pencatat': a.teacherName || '-',
       'Catatan': a.notes || '-'
@@ -224,7 +224,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
           >
             <option value="">-- Pilih Kelas --</option>
             {classes?.map(cls => (
-              <option key={cls.id} value={cls.name}>{cls.name}</option>
+              <option key={`cls-opt-${cls.id}`} value={cls.name}>{cls.name}</option>
             ))}
           </select>
         </div>
@@ -239,7 +239,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
           >
             <option value="">-- {selectedClass ? 'Pilih Siswa' : 'Pilih Kelas Dulu'} --</option>
             {classStudents.map(student => (
-              <option key={student.id} value={student.id}>{student.name}</option>
+              <option key={`stud-opt-${student.id}`} value={student.id}>{student.name}</option>
             ))}
           </select>
         </div>
@@ -279,7 +279,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
                 onChange={(e) => setSelectedMonth(e.target.value)}
               >
                 {[...Array(12)].map((_, i) => (
-                  <option key={i+1} value={(i+1).toString()}>{format(parseISO(`2000-${(i+1).toString().padStart(2, '0')}-01`), 'MMMM', {locale: id})}</option>
+                  <option key={`month-opt-${i+1}`} value={(i+1).toString()}>{format(parseISO(`2000-${(i+1).toString().padStart(2, '0')}-01`), 'MMMM', {locale: id})}</option>
                 ))}
               </select>
             </div>
@@ -336,7 +336,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredAttendance.map((record) => (
-                <tr key={record.id} className="hover:bg-gray-50">
+                <tr key={`att-row-${record.id}`} className="hover:bg-gray-50">
                   {editingId === record.id ? (
                      <>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(record.date)}</td>
@@ -350,9 +350,9 @@ export default function IndividualAttendance({ students, attendance, classes, on
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                            <select className="border p-1 rounded" value={editStatus} onChange={e => setEditStatus(e.target.value)}>
-                              <option value="pending">Pending</option>
-                              <option value="approved">Disetujui</option>
-                              <option value="rejected">Ditolak</option>
+
+                              <option value="Approved">Diterima</option>
+                              <option value="Rejected">Ditolak</option>
                            </select>
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">
@@ -373,12 +373,12 @@ export default function IndividualAttendance({ students, attendance, classes, on
                            {record.type}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                           {record.status === 'approved' ? (
-                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">Disetujui</span>
-                           ) : record.status === 'rejected' ? (
+                           {record.status === 'Approved' ? (
+                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">Diterima</span>
+                           ) : record.status === 'Rejected' ? (
                               <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">Ditolak</span>
                            ) : (
-                              <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">Pending</span>
+                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">Diterima</span>
                            )}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">

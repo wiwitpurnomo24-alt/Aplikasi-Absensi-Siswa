@@ -26,8 +26,8 @@ export default function ActiveAcademicYearDisplay() {
   if (!activeYear) return null;
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-sm">
-      <Calendar size={12} className="text-blue-600" />
+    <div className="flex items-center gap-1.5 px-3 py-1 bg-white/15 text-white border border-white/20 rounded-full shadow-sm">
+      <Calendar size={12} className="text-white" />
       <span className="text-[10px] font-extrabold whitespace-nowrap">
         TA: {activeYear.year}
       </span>

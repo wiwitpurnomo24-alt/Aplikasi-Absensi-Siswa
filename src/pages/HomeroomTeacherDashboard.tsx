@@ -2,48 +2,91 @@ import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { useAuthStore } from '../lib/auth-store';
-import { MessageCircle, CheckCircle2, Clock } from 'lucide-react';
+import { MessageCircle, CheckCircle2, Clock, Calendar, FileText } from 'lucide-react';
 import { handleFirestoreError } from '../lib/firebase';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
+import RoleSwitcher from '../components/RoleSwitcher';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
+import PresenceMonthlyReport from '../components/PresenceMonthlyReport';
+import PresenceSemesterReport from '../components/PresenceSemesterReport';
+import AttendanceRecapTable from '../components/AttendanceRecapTable';
+import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
+import { Student, AttendanceRecord } from '../types';
+import { cn } from '../lib/utils';
 
 export default function HomeroomTeacherDashboard() {
   const { user } = useAuthStore();
   const [inquiries, setInquiries] = useState<any[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [presence, setPresence] = useState<any[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'inquiry' | 'monitoring' | 'monthly' | 'semester'>('inquiry');
 
   useEffect(() => {
-    if (!user?.className) return;
+    if (!user) return;
 
     const fetchData = async () => {
         setLoading(true);
-        // Fetch inquiries
-        const q = query(
-            collection(db, 'subjectInquiries'),
-            where('className', '==', user.className),
-            orderBy('createdAt', 'desc')
-        );
-        
-        const subAttQ = query(
-             collection(db, 'attendance'),
-             where('className', '==', user.className)
-        );
 
-        const [inqSnap, attSnap] = await Promise.all([
-            getDocs(q),
-            getDocs(subAttQ)
-        ]);
-        
-        setInquiries(inqSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        
-        // Scan alerts
-        const attendance = attSnap.docs.map(d => ({...d.data(), id: d.id}));
-        // We need students here for checkAttendanceAlert. For simplicity, just check what we have.
-        // The checkAttendanceAlert was designed to be run per student.
-        // Actually, checkAttendanceAlert does the check inside.
-        // This is a bit simplified.
+        let className = user?.className;
 
-        setLoading(false);
+        if (!className) {
+            // Try to find the class assigned to this teacher
+            const classQuery = query(collection(db, 'classes'), where('waliKelasId', '==', user?.uid));
+            const classSnap = await getDocs(classQuery);
+            if (!classSnap.empty) {
+                className = classSnap.docs[0].data().name;
+            }
+        }
+
+        if (!className) {
+            setLoading(false);
+            return;
+        }
+
+        try {
+            // Fetch inquiries
+            const q = query(
+                collection(db, 'subjectInquiries'),
+                where('className', '==', className),
+                orderBy('createdAt', 'desc')
+            );
+            
+            // Fetch students
+            const stdQ = query(
+                collection(db, 'students'),
+                where('className', '==', className)
+            );
+
+            // Fetch school presence logs
+            const presQuery = query(
+                collection(db, 'schoolPresence'),
+                where('className', '==', className)
+            );
+
+            // Fetch absenteeism (attendance collection)
+            const attQ = query(
+                collection(db, 'attendance'),
+                where('className', '==', className)
+            );
+
+            const [inqSnap, stdSnap, presSnap, attSnap] = await Promise.all([
+                getDocs(q),
+                getDocs(stdQ),
+                getDocs(presQuery),
+                getDocs(attQ)
+            ]);
+            
+            setInquiries(inqSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            setStudents(stdSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+            setPresence(presSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            setAttendance(attSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord)));
+        } catch (err) {
+            console.error("Error fetching dashboard data:", err);
+        } finally {
+            setLoading(false);
+        }
     }
     fetchData();
   }, [user]);
@@ -56,6 +99,8 @@ export default function HomeroomTeacherDashboard() {
         respondedAt: serverTimestamp(),
         status: 'Sudah di Jawab'
       });
+      // Update local state
+      setInquiries(prev => prev.map(inq => inq.id === id ? { ...inq, response, respondedBy: user?.name, status: 'Sudah di Jawab' } : inq));
     } catch (err) {
       handleFirestoreError(err, 'update', 'subjectInquiries');
     }
@@ -65,44 +110,125 @@ export default function HomeroomTeacherDashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-2xl font-bold">Dashboard Wali Kelas - Inquiries</h2>
-      <AttendanceAlertsDisplay />
-      <div className="grid gap-4">
-        {inquiries.map(inq => (
-          <div key={inq.id} className="bg-white p-4 rounded-xl shadow border border-gray-200">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="font-bold">{inq.studentName} - {inq.subjectName}</p>
-                <p className="text-sm text-gray-600">{inq.message}</p>
-              </div>
-              <span className={`px-2 py-1 rounded text-xs ${inq.status === 'Sudah di Jawab' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                {inq.status}
-              </span>
-            </div>
-            {inq.status === 'Menunggu' && (
-              <div className="mt-4 flex gap-2">
-                <input type="text" placeholder="Balas pertanyaan..." className="flex-1 p-2 border rounded" id={`reply-${inq.id}`} />
-                <button 
-                  onClick={() => {
-                    const input = document.getElementById(`reply-${inq.id}`) as HTMLInputElement;
-                    if(input.value) handleReply(inq.id, input.value);
-                  }}
-                  className="bg-blue-600 text-white px-4 py-2 rounded font-bold"
-                >
-                  Kirim
-                </button>
-              </div>
-            )}
-            {inq.response && (
-              <div className="mt-4 p-3 bg-gray-50 text-sm rounded">
-                <p className="font-bold">Balasan:</p>
-                <p>{inq.response}</p>
-                <p className="text-xs text-gray-400">Oleh {inq.respondedBy}</p>
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+         <div>
+            <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tight">Dashboard Wali Kelas</h2>
+            <p className="text-xs text-gray-500 font-bold uppercase tracking-widest">Kelas: {user?.className || 'N/A'}</p>
+         </div>
+         <RoleSwitcher />
       </div>
+
+      <div className="flex flex-wrap items-center gap-2 bg-gray-100/50 p-1.5 rounded-2xl w-fit">
+        <button 
+          onClick={() => setActiveTab('inquiry')}
+          className={cn(
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            activeTab === 'inquiry' ? "bg-gray-800 text-white shadow-md" : "text-gray-400 hover:text-gray-600"
+          )}
+        >
+          <MessageCircle size={16} /> Tanya Wali
+        </button>
+        <button 
+          onClick={() => setActiveTab('monitoring')}
+          className={cn(
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            activeTab === 'monitoring' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-400 hover:text-gray-600"
+          )}
+        >
+          <Clock size={16} /> Monitoring Harian
+        </button>
+        <button 
+          onClick={() => setActiveTab('monthly')}
+          className={cn(
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            activeTab === 'monthly' ? "bg-green-600 text-white shadow-md shadow-green-200" : "text-gray-400 hover:text-gray-600"
+          )}
+        >
+          <Calendar size={16} /> Laporan Bulanan
+        </button>
+        <button 
+          onClick={() => setActiveTab('semester')}
+          className={cn(
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+            activeTab === 'semester' ? "bg-purple-600 text-white shadow-md shadow-purple-200" : "text-gray-400 hover:text-gray-600"
+          )}
+        >
+          <FileText size={16} /> Laporan Semester
+        </button>
+      </div>
+
+      <AttendanceAlertsDisplay />
+
+      {activeTab === 'inquiry' && (
+        <div className="grid gap-4">
+           <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-2">Pertanyaan Siswa</h3>
+           {inquiries.length === 0 ? (
+             <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                <p className="text-gray-400 font-bold">Belum ada pertanyaan</p>
+             </div>
+           ) : (
+            inquiries.map(inq => (
+              <div key={`homeroom-inq-${inq.id}`} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 transition-all">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-black text-gray-900">{inq.studentName}</p>
+                    <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2">{inq.subjectName}</p>
+                    <p className="text-sm text-gray-600 leading-relaxed font-medium">{inq.message}</p>
+                  </div>
+                  <span className={cn(
+                    "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                    inq.status === 'Sudah di Jawab' ? 'bg-green-50 text-green-700' : 'bg-orange-50 text-orange-700'
+                  )}>
+                    {inq.status}
+                  </span>
+                </div>
+                {inq.status === 'Menunggu' && (
+                  <div className="mt-4 flex flex-col sm:flex-row gap-2">
+                    <textarea 
+                        placeholder="Tulis balasan di sini..." 
+                        className="flex-1 p-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" 
+                        id={`reply-${inq.id}`}
+                        rows={2}
+                    />
+                    <button 
+                      onClick={() => {
+                        const input = document.getElementById(`reply-${inq.id}`) as HTMLTextAreaElement;
+                        if(input.value) handleReply(inq.id, input.value);
+                      }}
+                      className="bg-blue-600 text-white px-6 py-2 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 h-fit self-end flex items-center gap-2"
+                    >
+                      <CheckCircle2 size={16} /> Kirim
+                    </button>
+                  </div>
+                )}
+                {inq.response && (
+                  <div className="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-100 relative">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 rounded-l-xl"></div>
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1 flex items-center gap-1">
+                        <Clock size={12} /> Balasan
+                    </p>
+                    <p className="text-sm text-gray-700 font-medium leading-relaxed">{inq.response}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase mt-2 tracking-wide">Oleh {inq.respondedBy}</p>
+                  </div>
+                )}
+              </div>
+            ))
+           )}
+        </div>
+      )}
+
+      {activeTab === 'monitoring' && (
+        <PresenceMonthlyReport students={students} presence={presence} />
+      )}
+
+      {activeTab === 'monthly' && (
+        <AttendanceRecapTable students={students} attendance={attendance} />
+      )}
+
+      {activeTab === 'semester' && (
+        <SemesterAttendanceRecapTable students={students} attendance={attendance} />
+      )}
     </div>
   );
 }
+

@@ -3,6 +3,7 @@ import { collection, query, limit, getDocs, doc, updateDoc } from 'firebase/fire
 import { db } from '../lib/firebase';
 import { SchoolData } from '../types';
 import { Image, Lock, Unlock, Save, Eye, EyeOff } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 export default function LogoSettings() {
   const [password, setPassword] = useState('');
@@ -35,9 +36,15 @@ export default function LogoSettings() {
     if (password === '@Dutatama123') {
       setIsLocked(false);
       setPassword('');
+      // Pre-fill with the requested logo URL
+      setLogoUrl('https://i.ibb.co.com/C5SL3dTB/logo-dutatama.png');
     } else {
       alert('Password salah!');
     }
+  };
+
+  const setDutatamaLogo = () => {
+    setLogoUrl('https://i.ibb.co.com/C5SL3dTB/logo-dutatama.png');
   };
 
   const handleSave = async () => {
@@ -52,35 +59,97 @@ export default function LogoSettings() {
     }
   }
 
-  if (loading) return <div>Memuat...</div>;
+  if (loading) return (
+    <div className="bg-white p-8 rounded-3xl border border-sky-100 shadow-sm flex items-center justify-center">
+      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-sky-600"></div>
+    </div>
+  );
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <Image size={20} />
-            Pengaturan Logo
-        </h3>
-        <button onClick={() => setIsLocked(!isLocked)} className="text-gray-500 p-2 rounded-lg hover:bg-gray-100">
-            {isLocked ? <Lock size={18}/> : <Unlock size={18}/>}
+    <div className="bg-white p-8 rounded-3xl border border-sky-100 shadow-xl shadow-sky-100/50 space-y-6">
+      <div className="flex items-center justify-between border-b border-sky-50 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-sky-100 text-sky-600 rounded-xl">
+            <Image size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Logo Dashboard</h3>
+            <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-0.5">Identitas Visual Utama</p>
+          </div>
+        </div>
+        <button 
+          onClick={() => setIsLocked(!isLocked)} 
+          className={cn(
+            "p-2.5 rounded-xl transition-all duration-300",
+            isLocked ? "bg-gray-50 text-gray-400" : "bg-sky-100 text-sky-600 ring-2 ring-sky-200"
+          )}
+        >
+            {isLocked ? <Lock size={20}/> : <Unlock size={20}/>}
         </button>
       </div>
       
       {isLocked ? (
-        <div className="flex gap-2">
+        <div className="flex gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
            <div className="flex-1 relative">
-             <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Masukkan password" className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-600 outline-none" />
-             <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-2 top-2 text-gray-500">
-               {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+             <input 
+              type={showPassword ? 'text' : 'password'} 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+              placeholder="Masukkan password modul..." 
+              className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold text-gray-800 placeholder:text-gray-300 focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all" 
+             />
+             <button 
+                type="button" 
+                onClick={() => setShowPassword(!showPassword)} 
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-sky-600 transition-colors"
+              >
+               {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
              </button>
            </div>
-           <button onClick={handleUnlock} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">Buka</button>
+           <button 
+            onClick={handleUnlock} 
+            className="bg-sky-600 text-white px-6 py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-sky-700 active:scale-95 transition-all shadow-lg shadow-sky-100"
+           >
+            BUKA
+           </button>
         </div>
       ) : (
-        <div className="space-y-4">
-            <input type="text" value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="URL Logo" className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-600 outline-none" />
-            <button onClick={handleSave} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold">
-                <Save size={18}/> Simpan Logo
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="bg-sky-500/[0.03] p-6 rounded-2xl border-2 border-sky-50 space-y-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-2 pl-1">
+                  URL Image / Source Logo
+                </label>
+                <input 
+                  type="text" 
+                  value={logoUrl} 
+                  onChange={e => setLogoUrl(e.target.value)} 
+                  placeholder="Paste URL Logo Disini..." 
+                  className="w-full p-4 bg-white border border-sky-100 rounded-2xl text-sm font-bold text-gray-800 focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all" 
+                />
+                <button 
+                  onClick={setDutatamaLogo} 
+                  className="text-left text-[10px] text-sky-600 font-black uppercase tracking-widest hover:text-sky-800 transition-colors pl-1 inline-flex items-center gap-1.5"
+                >
+                  <span className="text-sm">+</span> Gunakan Standar Logo Dutatama
+                </button>
+              </div>
+
+              {logoUrl && (
+                <div className="flex flex-col items-center gap-2 py-4">
+                  <span className="text-[10px] font-black text-sky-400 uppercase tracking-widest">Pratinjau:</span>
+                  <div className="h-20 w-auto p-4 bg-white rounded-2xl border border-sky-100 shadow-inner">
+                    <img src={logoUrl} alt="Preview" className="h-full object-contain" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button 
+              onClick={handleSave} 
+              className="w-full flex items-center justify-center gap-3 bg-green-600 text-white p-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-green-700 active:scale-[0.98] transition-all shadow-xl shadow-green-100"
+            >
+                <Save size={18}/> SIMPAN PERUBAHAN LOGO
             </button>
         </div>
       )}

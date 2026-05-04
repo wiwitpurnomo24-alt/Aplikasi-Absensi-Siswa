@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
-import { School, UserCircle, Users, Settings, LogIn, ShieldCheck, ArrowRight, GraduationCap, ClipboardList, Eye, EyeOff } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { School, UserCircle, Users, Settings, LogIn, ShieldCheck, ArrowRight, GraduationCap, ClipboardList, Eye, EyeOff, Scan, X, Camera } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
 import { db, auth, handleFirestoreError } from '../lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, signInAnonymously, updateProfile } from 'firebase/auth';
 import { cn } from '../lib/utils';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { ROLE_LABELS } from '../constants';
 import { UserRole } from '../types';
 
@@ -16,8 +17,69 @@ export default function Login() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, login } = useAuthStore();
+
+  useEffect(() => {
+    // Handle query params for auto-fill login
+    const nisParam = searchParams.get('nis');
+    const nipParam = searchParams.get('nip');
+    const idParam = searchParams.get('id');
+
+    if (idParam || nisParam || nipParam) {
+      setId(idParam || nisParam || nipParam || '');
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (showScanner) {
+      // Small delay to ensure DOM is ready
+      const timer = setTimeout(() => {
+        try {
+          scannerRef.current = new Html5QrcodeScanner(
+            "qr-reader",
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            /* verbose= */ false
+          );
+          
+          scannerRef.current.render((decodedText) => {
+            try {
+              // Check if it's a URL with params
+              if (decodedText.includes('?')) {
+                const url = new URL(decodedText);
+                const nis = url.searchParams.get('nis') || url.searchParams.get('id');
+                const nip = url.searchParams.get('nip');
+                if (nis || nip) {
+                  setId(nis || nip || '');
+                  setShowScanner(false);
+                }
+              } else {
+                setId(decodedText);
+                setShowScanner(false);
+              }
+            } catch (e) {
+              setId(decodedText);
+              setShowScanner(false);
+            }
+          }, (err) => {
+            // Silently ignore scanner errors
+          });
+        } catch (err) {
+          console.error("Scanner init failed", err);
+        }
+      }, 300);
+
+      return () => {
+        clearTimeout(timer);
+        if (scannerRef.current) {
+          scannerRef.current.clear().catch(err => console.error("Failed to clear scanner", err));
+        }
+      };
+    }
+  }, [showScanner]);
 
   useEffect(() => {
     if (user) {
@@ -60,7 +122,11 @@ export default function Login() {
       }
     } catch (err: any) {
       console.error(err);
-      setError('Gagal masuk dengan Google: ' + err.message);
+      if (err.code === 'auth/network-request-failed') {
+        setError('Gagal terhubung ke layanan autentikasi. Pastikan koneksi internet stabil.');
+      } else {
+        setError('Gagal masuk dengan Google: ' + err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -79,59 +145,20 @@ export default function Login() {
     if (role === 'SUBJECT_TEACHER') { name = 'Guru Mapel Demo'; }
     if (role === 'PARENT') { name = 'Orang Tua Demo'; className = '7A'; loginId = '12345'; }
 
-    try {
-      let userCred;
-      try {
-        userCred = await signInAnonymously(auth);
-        if (userCred.user) {
-          await updateProfile(userCred.user, { displayName: name });
-          // Force refresh token to include the new displayName in token.name for firestore rules
-          await userCred.user.getIdToken(true);
-        }
-      } catch (authErr: any) {
-        console.error("Firebase Auth Error:", authErr);
-        if (authErr.code === 'auth/admin-restricted-operation') {
-          if (role === 'ADMIN') {
-            console.warn("Continuing as Local Admin without Firebase session.");
-          } else {
-            setError('Login demo tidak tersedia saat ini. Harap gunakan login Google atau hubungi admin.');
-            setLoading(false);
-            return;
-          }
-        } else {
-          setError('Gagal inisialisasi sesi keamanan Firebase: ' + authErr.message);
-          setLoading(false);
-          return;
-        }
-      }
-
-        const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
-        const uid = userCred?.user?.uid || 'demo-user-' + Date.now();
-        const userDoc = doc(db, 'users', uid);
-        await setDoc(userDoc, {
-          name,
-          role,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-
-        login({ 
-          uid: uid,
-          role, 
-          roles: [role],
-          name, 
-          nis: role === 'PARENT' ? loginId : undefined, 
-          nip: (role === 'TEACHER' || role === 'COUNSELOR' || role === 'SUBJECT_TEACHER') ? loginId : undefined, 
-          email: role === 'ADMIN' ? loginId : undefined, 
-          className, 
-          managedClasses: ['7A', '7B'] 
-        });
-      navigate(role === 'ADMIN' ? '/admin' : role === 'TEACHER' ? '/teacher' : role === 'SUBJECT_TEACHER' ? '/subject-teacher' : role === 'COUNSELOR' ? '/admin' : '/parent');
-    } catch (err) {
-      console.error(err);
-      setError('Gagal inisialisasi sesi demo.');
-    } finally {
-      setLoading(false);
-    }
+    // Demo login: Skip Firebase session for simplicity
+    login({ 
+      uid: 'demo-user-' + Date.now(),
+      role, 
+      roles: [role],
+      name, 
+      nis: role === 'PARENT' ? loginId : undefined, 
+      nip: (role === 'TEACHER' || role === 'COUNSELOR' || role === 'SUBJECT_TEACHER') ? loginId : undefined, 
+      email: role === 'ADMIN' ? loginId : undefined, 
+      className, 
+      managedClasses: ['7A', '7B'] 
+    });
+    navigate(role === 'ADMIN' ? '/admin' : role === 'TEACHER' ? '/teacher' : role === 'SUBJECT_TEACHER' ? '/subject-teacher' : role === 'COUNSELOR' ? '/admin' : '/parent');
+    setLoading(false);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -150,7 +177,8 @@ export default function Login() {
         if (!teacherSnap.empty) {
             const teacherDoc = teacherSnap.docs[0];
             const teacherData = teacherDoc.data();
-            const passwordField = teacherData.password || '12345';
+            // Try 'password' first, then 'SANDI'
+            const passwordField = teacherData.password || teacherData['SANDI'] || '12345';
             
             if (passwordField === normalizedPassword) {
                 // Determine roles based on document fields
@@ -161,25 +189,17 @@ export default function Login() {
                 if (teacherData.isKepalaSekolah || teacherData.isWakilKepala) roles.push('ADMIN');
 
                 // If no roles, set default
+                if (roles.length === 0) {
+                   if (Array.isArray(teacherData.status)) {
+                      if (teacherData.status.includes('Wali Kelas')) roles.push('TEACHER');
+                      if (teacherData.status.includes('Guru Mapel')) roles.push('SUBJECT_TEACHER');
+                      if (teacherData.status.includes('Guru BK')) roles.push('COUNSELOR');
+                   }
+                }
+                
                 if (roles.length === 0) roles.push('TEACHER');
 
-                let uid = 'user-' + Date.now();
-                try {
-                  const userCred = await signInAnonymously(auth);
-                  await updateProfile(userCred.user, { displayName: teacherData.name });
-                  await userCred.user.getIdToken(true);
-                  uid = userCred.user.uid;
-                } catch (authError: any) {
-                   console.warn('Anonymous Auth restricted, using fallback UID for UI session.');
-                }
-
-                const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
-                await setDoc(doc(db, 'users', uid), {
-                  name: teacherData.name,
-                  role: roles[0],
-                  roles: roles,
-                  updatedAt: serverTimestamp()
-                }, { merge: true });
+                const uid = teacherDoc.id; // Use teacher document ID as UID for consistency
 
                 login({
                     uid: uid,
@@ -196,7 +216,7 @@ export default function Login() {
                 navigate(role === 'ADMIN' ? '/admin' : role === 'TEACHER' ? '/teacher' : role === 'SUBJECT_TEACHER' ? '/subject-teacher' : '/admin');
                 return;
             } else {
-                setError('Username atau Password salah (Teacher).');
+                setError('Username atau Password salah.');
                 setLoading(false);
                 return;
             }
@@ -209,37 +229,97 @@ export default function Login() {
         if (!studentSnap.empty) {
             const studentDoc = studentSnap.docs[0];
             const studentData = studentDoc.data();
-            const passwordField = studentData.parentPassword || '12345';
+            // Try 'parentPassword' first, then 'SANDI ORTU'
+            const passwordField = studentData.parentPassword || studentData['SANDI ORTU'] || '12345';
             
             if (passwordField === normalizedPassword) {
-                 let uid = 'user-' + Date.now();
-                 try {
-                   const userCred = await signInAnonymously(auth);
-                   uid = userCred.user.uid;
-                 } catch (authError: any) {
-                    console.warn('Anonymous Auth restricted, using fallback UID for UI session.');
+                 const roles: UserRole[] = ['PARENT'];
+                 let activeRole: UserRole = 'PARENT';
+                 
+                 if (studentData.role === 'PETUGAS_ABSEN_KELAS') {
+                   roles.push('PETUGAS_ABSEN_KELAS');
+                   activeRole = 'PETUGAS_ABSEN_KELAS';
                  }
+
                  login({
-                     uid: uid,
-                     role: 'PARENT',
-                     roles: ['PARENT'],
+                     uid: studentDoc.id,
+                     role: activeRole,
+                     roles: roles,
                      nis: normalizedId,
                      name: studentData.name,
                      className: studentData.className
                  });
-                 navigate('/parent');
+                 
+                 if (activeRole === 'PETUGAS_ABSEN_KELAS') {
+                   navigate('/attendance-officer');
+                 } else {
+                   navigate('/parent');
+                 }
                  return;
             } else {
-                setError('Username atau Password salah (Parent).');
+                setError('Username atau Password salah.');
                 setLoading(false);
                 return;
             }
         }
 
-        setError('Username atau Password tidak ditemukan.');
+        // 3. Check if Class Attendance Officer (Special Format: Class + AbsensiNo)
+        // We will fetch ALL students who have the role or have a clean ID match
+        const studentRef = collection(db, 'students');
+        const allStudentsSnap = await getDocs(studentRef);
+        
+        const foundOfficerDoc = allStudentsSnap.docs.find(doc => {
+            const data = doc.data();
+            const cleanClassName = (data.className || '').replace(/\s+/g, '').toUpperCase();
+            const paddedNo = String(data.absensiNo || '').padStart(2, '0');
+            const officerId = `${cleanClassName}${paddedNo}`;
+            
+            // Priority 1: Check new explicit userId field
+            if (data.userId && data.userId === normalizedId) return true;
+            
+            // Priority 2: Fallback to old format
+            return officerId.toLowerCase() === normalizedId.toLowerCase();
+        });
+
+        if (foundOfficerDoc) {
+            const studentData = foundOfficerDoc.data();
+            // Important: Check if they are actually an officer
+            console.log("DEBUG: Officer found, UID:", foundOfficerDoc.id, "Data:", JSON.stringify(studentData));
+            if (studentData.role !== 'PETUGAS_ABSEN_KELAS') {
+                 console.log("DEBUG: Role mismatched. Expected: PETUGAS_ABSEN_KELAS, Found:", studentData.role);
+                 setError('Akun tidak memiliki akses Petugas Absensi Kelas.');
+                 setLoading(false);
+                 return;
+            }
+
+            // For officers, the password is their new password, then parentPassword or NIS or 12345
+            const passwordField = studentData.password || studentData.parentPassword || studentData.nis || studentData['SANDI ORTU'] || '12345';
+            
+            if (passwordField === normalizedPassword) {
+                 const roles: UserRole[] = ['PARENT', 'PETUGAS_ABSEN_KELAS'];
+                 
+                 login({
+                     uid: foundOfficerDoc.id,
+                     role: 'PETUGAS_ABSEN_KELAS',
+                     roles: roles,
+                     nis: studentData.nis,
+                     name: studentData.name,
+                     className: studentData.className
+                 });
+                 
+                 navigate('/attendance-officer');
+                 return;
+            } else {
+                setError('Username atau Password salah.');
+                setLoading(false);
+                return;
+            }
+        }
+
+        setError('Username tidak ditemukan.');
     } catch (err: any) {
         handleFirestoreError(err, 'get', 'login');
-        setError('Terjadi kesalahan sistem.' + err.message);
+        setError('Terjadi kesalahan sistem: ' + err.message);
     } finally {
         setLoading(false);
     }
@@ -271,7 +351,7 @@ export default function Login() {
         <div className="relative z-10 flex items-center gap-6">
            <div className="flex -space-x-3">
               {[1,2,3,4].map(i => (
-                <div key={i} className="w-10 h-10 rounded-full border-2 border-blue-700 bg-blue-200" />
+                <div key={`login-avatar-${i}`} className="w-10 h-10 rounded-full border-2 border-blue-700 bg-blue-200" />
               ))}
            </div>
            <p className="text-sm text-blue-100 font-medium">Dipercaya oleh ribuan siswa & guru</p>
@@ -369,6 +449,15 @@ export default function Login() {
               {!loading && <ArrowRight size={20} />}
             </button>
 
+            <button
+              type="button"
+              onClick={() => setShowScanner(true)}
+              className="w-full py-3.5 bg-white text-gray-700 border border-gray-200 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-gray-50 transition-all group"
+            >
+              <Scan size={20} className="text-blue-600 group-hover:scale-110 transition-transform" />
+              Scan QR Code Login
+            </button>
+
                         <div className="relative py-4">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-gray-100"></div>
@@ -406,6 +495,49 @@ export default function Login() {
           </p>
         </motion.div>
       </div>
+      {/* QR Scanner Modal */}
+      <AnimatePresence>
+        {showScanner && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl"
+            >
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-blue-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white">
+                    <Camera size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900">Scan QR Code</h3>
+                    <p className="text-xs text-blue-600 font-medium tracking-tight">Posisikan kode di dalam kotak</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowScanner(false)}
+                  className="p-2 hover:bg-white rounded-full transition-colors text-gray-400 hover:text-gray-900"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="p-6">
+                <div id="qr-reader" className="w-full rounded-2xl overflow-hidden border-2 border-dashed border-blue-200" />
+                <div className="mt-6 flex flex-col items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                  <p className="text-sm text-gray-500 font-medium">Buka menu 'Cetak QR' di dashboard admin untuk melihat kode Anda</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

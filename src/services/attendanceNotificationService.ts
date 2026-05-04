@@ -2,33 +2,6 @@ import { addDoc, collection, query, where, getDocs, Timestamp } from 'firebase/f
 import { db } from '../lib/firebase';
 import { AttendanceRecord, AttendanceAlert } from '../types';
 
-export const checkAttendanceAlert = async (studentId: string, studentName: string, className: string, allAttendance: AttendanceRecord[], xDays: number, yDays: number) => {
-  const studentAttendance = allAttendance
-    .filter(a => a.studentId === studentId)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  // Consecutive absence (Type 'Alpa' - assuming 'Alpa' is what the user meant by "tidak hadir")
-  let consecutiveCount = 0;
-  for (const record of studentAttendance) {
-    if (record.type === 'Alpa') {
-        consecutiveCount++;
-    } else {
-        consecutiveCount = 0;
-    }
-    if (consecutiveCount >= xDays) {
-        // Trigger alert
-        await createAlert(studentId, studentName, className, 'consecutive', `Tidak hadir ${consecutiveCount} hari berturut-turut`);
-        consecutiveCount = 0; // Reset after alerting
-    }
-  }
-
-  // Total absence in semester (Alpa)
-  const totalAlpa = studentAttendance.filter(a => a.type === 'Alpa').length;
-  if(totalAlpa >= yDays) {
-      await createAlert(studentId, studentName, className, 'total', `Total ketidakhadiran mencapai ${totalAlpa} hari dalam satu semester`);
-  }
-};
-
 const createAlert = async (studentId: string, studentName: string, className: string, type: 'consecutive' | 'total', details: string) => {
     // Prevent duplicate active alerts
     const alertsRef = collection(db, 'attendance_alerts');
@@ -46,4 +19,62 @@ const createAlert = async (studentId: string, studentName: string, className: st
         createdAt: Timestamp.now(),
         status: 'active'
     });
+
+    // Notify Wali Kelas via the Layout Bell system
+    await addDoc(collection(db, 'notifications'), {
+        className: className,
+        studentName: studentName,
+        studentId: studentId,
+        message: `${studentName}: ${details}`,
+        title: 'Peringatan Kehadiran Siswa',
+        read: false,
+        type: 'WARNING',
+        createdAt: Timestamp.now()
+    });
+
+    // Notify ADMIN via the Layout Bell system
+    await addDoc(collection(db, 'notifications'), {
+        targetRole: 'ADMIN',
+        studentName: studentName,
+        studentId: studentId,
+        className: className,
+        message: `${studentName} (${className}): ${details}`,
+        title: 'Peringatan Sistem: Kehadiran Siswa',
+        read: false,
+        type: 'WARNING',
+        createdAt: Timestamp.now()
+    });
+};
+
+export const checkAttendanceAlert = async (studentId: string, studentName: string, className: string) => {
+  // Fetch only approved attendance for this student
+  const q = query(
+    collection(db, 'attendance'), 
+    where('studentId', '==', studentId),
+    where('status', '==', 'Approved')
+  );
+  
+  const snapshot = await getDocs(q);
+  const studentAttendance = snapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // 1. Consecutive Sakit ( > 3 days)
+  let consecutiveSakit = 0;
+  for (const record of studentAttendance) {
+    if (record.type === 'Sakit') {
+      consecutiveSakit++;
+    } else {
+      consecutiveSakit = 0;
+    }
+    if (consecutiveSakit > 3) {
+      await createAlert(studentId, studentName, className, 'consecutive', `Sakit lebih dari 3 hari berturut-turut (${consecutiveSakit} hari)`);
+    }
+  }
+
+  // 2. Total Alpa ( > 10 days)
+  const totalAlpa = studentAttendance.filter(a => a.type === 'Alpa').length;
+  if (totalAlpa > 10) {
+    await createAlert(studentId, studentName, className, 'total', `Total ketidakhadiran (Alpa) melebihi 10 hari (${totalAlpa} hari)`);
+  }
 };

@@ -21,12 +21,16 @@ import {
   Share2,
   Copy,
   ExternalLink,
-  Trash2
+  Trash2,
+  MapPin,
+  RefreshCw,
+  LayoutGrid
 } from 'lucide-react';
 import { db, auth, handleFirestoreError, storage } from '../lib/firebase';
-import { collection, query, where, getDocs, updateDoc, doc, orderBy, addDoc, Timestamp, onSnapshot, serverTimestamp, deleteDoc, arrayUnion } from 'firebase/firestore';
+import { checkAttendanceAlert } from '../services/attendanceNotificationService';
+import { collection, query, where, getDocs, getDoc, updateDoc, doc, orderBy, addDoc, Timestamp, onSnapshot, serverTimestamp, deleteDoc, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { cn, formatDate } from '../lib/utils';
+import { cn, formatDate, getTimeSafe } from '../lib/utils';
 import { AttendanceRecord, Student } from '../types';
 import { useAuthStore } from '../lib/auth-store';
 import { useSearchParams } from 'react-router-dom';
@@ -39,18 +43,24 @@ import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapT
 import AttendanceWeekCalendar from '../components/AttendanceWeekCalendar';
 import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import SimpleNotification from '../components/SimpleNotification';
+import IndividualAttendance from '../components/IndividualAttendance';
+import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 
 export default function TeacherDashboard() {
-  const { user } = useAuthStore();
+  const { user, login } = useAuthStore();
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [success, setSuccess] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
   const showConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({isOpen: true, message, onConfirm});
 
   const [filterType, setFilterType] = useState('All');
   const [filterDate, setFilterDate] = useState('');
+  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [filterSemester, setFilterSemester] = useState('1');
   const [searchQuery, setSearchQuery] = useState('');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [className, setClassName] = useState('');
@@ -66,7 +76,9 @@ export default function TeacherDashboard() {
   const [selectedInquiry, setSelectedInquiry] = useState<any>(null);
   const [inquiryResponse, setInquiryResponse] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addFormData, setAddFormData] = useState<Partial<AttendanceRecord>>({});
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [addFormData, setAddFormData] = useState<any>({ isRange: false });
+  const [addStudentFormData, setAddStudentFormData] = useState({ name: '', nis: '', nisn: '', gender: 'L' });
   const [allClasses, setAllClasses] = useState<{id: string, name: string}[]>([]);
   const [addFormClass, setAddFormClass] = useState('');
   const [manualStudents, setManualStudents] = useState<Student[]>([]);
@@ -76,122 +88,205 @@ export default function TeacherDashboard() {
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  const printLoginCards = () => {
+  const printLoginCards = async () => {
     if (students.length === 0) {
       alert('Tidak ada siswa di kelas ini.');
       return;
     }
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const cardWidth = 90;
-    const cardHeight = 55;
-    const margin = 10;
-    const cardsPerRow = 2;
-    const cardsPerCol = 5;
-    const xSpacing = (210 - (cardWidth * cardsPerRow) - (margin * 2)) / (cardsPerRow - 1 || 1);
-    const ySpacing = (297 - (cardHeight * cardsPerCol) - (margin * 2)) / (cardsPerCol - 1 || 1);
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan kartu login siswa...');
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const cardWidth = 90;
+      const cardHeight = 55;
+      const margin = 10;
+      const cardsPerRow = 2;
+      const cardsPerCol = 5;
+      const xSpacing = (210 - (cardWidth * cardsPerRow) - (margin * 2)) / (cardsPerRow - 1 || 1);
+      const ySpacing = (297 - (cardHeight * cardsPerCol) - (margin * 2)) / (cardsPerCol - 1 || 1);
 
-    students.forEach((s, index) => {
-      const pageIndex = index % (cardsPerRow * cardsPerCol);
-      if (index > 0 && pageIndex === 0) doc.addPage();
+      students.forEach((s, index) => {
+        const pageIndex = index % (cardsPerRow * cardsPerCol);
+        if (index > 0 && pageIndex === 0) doc.addPage();
 
-      const row = Math.floor(pageIndex / cardsPerRow);
-      const col = pageIndex % cardsPerRow;
+        const row = Math.floor(pageIndex / cardsPerRow);
+        const col = pageIndex % cardsPerRow;
 
-      const x = margin + col * (cardWidth + xSpacing);
-      const y = margin + row * (cardHeight + ySpacing);
+        const x = margin + col * (cardWidth + xSpacing);
+        const y = margin + row * (cardHeight + ySpacing);
 
-      // Card border
-      doc.setDrawColor(200);
-      doc.rect(x, y, cardWidth, cardHeight);
+        // Card border
+        doc.setDrawColor(200);
+        doc.rect(x, y, cardWidth, cardHeight);
 
-      // Header
-      doc.setFillColor(30, 64, 175);
-      doc.rect(x, y, cardWidth, 12, 'F');
-      doc.setTextColor(255);
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.text("KARTU LOGIN SISWA", x + cardWidth / 2, y + 5, { align: "center" });
-      doc.setFontSize(7);
-      doc.text("SMP NEGERI 2 MAGELANG", x + cardWidth / 2, y + 9, { align: "center" });
+        // Header
+        doc.setFillColor(30, 64, 175);
+        doc.rect(x, y, cardWidth, 12, 'F');
+        doc.setTextColor(255);
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text("KARTU LOGIN SISWA", x + cardWidth / 2, y + 5, { align: "center" });
+        doc.setFontSize(7);
+        doc.text("SMP NEGERI 2 MAGELANG", x + cardWidth / 2, y + 9, { align: "center" });
 
-      // Content
-      doc.setTextColor(0);
-      doc.setFontSize(9);
-      doc.text(`Nama : ${s.name}`, x + 5, y + 20);
-      doc.text(`Kelas : ${s.className}`, x + 5, y + 25);
-      
-      doc.setDrawColor(230);
-      doc.line(x + 5, y + 28, x + cardWidth - 5, y + 28);
+        // Content
+        doc.setTextColor(0);
+        doc.setFontSize(9);
+        doc.text(`Nama : ${s.name}`, x + 5, y + 20);
+        doc.text(`Kelas : ${s.className}`, x + 5, y + 25);
+        
+        doc.setDrawColor(230);
+        doc.line(x + 5, y + 28, x + cardWidth - 5, y + 28);
 
-      doc.setFontSize(8);
-      doc.text("Kredensial Login:", x + 5, y + 33);
-      doc.setFontSize(10);
-      doc.text(`Username (NIS): ${s.nis}`, x + 5, y + 39);
-      doc.text(`SANDI: ${s.parentPassword || '-'}`, x + 5, y + 45);
-      
-      doc.setFontSize(7);
-      doc.setTextColor(100);
-      doc.text("Situs: absensi-smpn2magelang.web.app", x + 5, y + 51);
-    });
+        doc.setFontSize(8);
+        doc.text("Kredensial Login:", x + 5, y + 33);
+        doc.setFontSize(10);
+        doc.text(`Username (NIS): ${s.nis}`, x + 5, y + 39);
+        doc.text(`SANDI: ${s.parentPassword || '-'}`, x + 5, y + 45);
+        
+        doc.setFontSize(7);
+        doc.setTextColor(100);
+        doc.text("Situs: absensi-smpn2magelang.web.app", x + 5, y + 51);
+      });
 
-    doc.save(`Kartu_Login_Kelas_${className}.pdf`);
+      doc.save(`Kartu_Login_Kelas_${className}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal mencetak kartu login: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
   };
 
   const fetchClassData = async () => {
+    if (!user) {
+      setLoading(false);
+      setStatusMessage('Data pengguna tidak ditemukan.');
+      return;
+    }
+    
+    let effectiveClassName = user.className;
+    
+    setLoading(true);
+    setStatusMessage('Memvalidasi data kelas wali...');
+    
+    try {
+      // 1. Prioritize official 'classes' collection explicitly assigned by Admin
+      const classQ = query(collection(db, 'classes'), where('waliKelasId', '==', user.uid));
+      const classSnap = await getDocs(classQ);
+      if (!classSnap.empty) {
+        effectiveClassName = classSnap.docs[0].data().name;
+      } else {
+        // 2. Fallback to teacher profile
+        const teacherDoc = await getDoc(doc(db, 'teachers', user.uid));
+        if (teacherDoc.exists()) {
+          const tData = teacherDoc.data();
+          if (tData.className && tData.className !== '') {
+             effectiveClassName = tData.className;
+          }
+        }
+      }
+    } catch(err) {
+      console.warn("Failed to refresh teacher class binding", err);
+    }
+
+    if (!effectiveClassName) {
+      setLoading(false);
+      setStatusMessage('Kelas Anda belum diatur di profil Anda. Hubungi Administrator.');
+      return;
+    }
+    
+    // Update global user object if class designation changed
+    if (user.className !== effectiveClassName) {
+       login({ ...user, className: effectiveClassName });
+    }
+
     setLoading(true);
     try {
-      const stored = localStorage.getItem('school_user');
-      if (!stored) return;
-      const user = JSON.parse(stored);
+      setClassName(effectiveClassName);
+
+      // Fetch students first
+      let stdSnapshot = await getDocs(query(collection(db, 'students'), where('className', '==', effectiveClassName)));
+      let stdData = stdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
       
-      if (user.className) {
-        setClassName(user.className);
-
-        // Fetch students in class
-        const stdQ = query(collection(db, 'students'), where('className', '==', user.className));
-        const stdSnapshot = await getDocs(stdQ);
-        const stdData = stdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
-        setStudents(stdData);
-
-        // Fetch attendance in class
-        const attQ = query(
-          collection(db, 'attendance'), 
-          where('className', '==', user.className),
-          orderBy('submittedAt', 'desc')
-        );
-        const attSnapshot = await getDocs(attQ);
-        const attData = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
-        setAttendance(attData);
-        setRecentAttendance(attData.slice(0, 5));
+      // Fallback: If no students found with exact className, fetch all and try manual matching
+      if (stdData.length === 0) {
+        const allStudentsSnap = await getDocs(collection(db, 'students'));
+        const allStudents = allStudentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+        const normalizedClassName = effectiveClassName.replace(/\s/g, '').toLowerCase();
+        stdData = allStudents.filter(s => (s.className || '').replace(/\s/g, '').toLowerCase() === normalizedClassName);
         
-        return;
+        if (stdData.length > 0 && stdData[0].className) {
+          effectiveClassName = stdData[0].className;
+          setClassName(effectiveClassName);
+        }
       }
+      
+      setStudents(stdData);
+
+      // Fetch attendance
+      let attData: AttendanceRecord[] = [];
+      try {
+        const attSnapshot = await getDocs(query(
+          collection(db, 'attendance'), 
+          where('className', '==', effectiveClassName),
+          orderBy('submittedAt', 'desc')
+        ));
+        attData = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
+      } catch (err) {
+        console.warn("Attendance orderBy failed, fetching without orderBy:", err);
+        const attSnapshot = await getDocs(query(collection(db, 'attendance'), where('className', '==', effectiveClassName)));
+        attData = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord))
+          .sort((a, b) => getTimeSafe(b.submittedAt) - getTimeSafe(a.submittedAt));
+      }
+      setAttendance(attData);
+      setRecentAttendance(attData.slice(0, 5));
+
+      // Parallelize alert checks to prevent slow sequential loading
+      Promise.all(students.map(s => 
+        checkAttendanceAlert(s.id, s.name, effectiveClassName!)
+      )).catch(err => console.error("Alert check failed:", err));
+
     } catch (err: any) {
-      handleFirestoreError(err, 'list', 'Teacher class data');
+      console.error("Firestore fetch error:", err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    let unsubscribe: any;
-    if (user && auth.currentUser) {
-      fetchClassData().then(unsub => {
-        unsubscribe = unsub;
-      });
+    if (user) {
+      fetchClassData();
+    } else {
+      setLoading(false);
     }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [user, auth.currentUser]);
+  }, [user]);
 
   const isInitialLoad = useRef(true);
   const [newAttendanceNotification, setNewAttendanceNotification] = useState<string | null>(null);
   const [newInquiryNotification, setNewInquiryNotification] = useState<string | null>(null);
+  const [teacherNotifications, setTeacherNotifications] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!className || !user || !auth.currentUser) return;
+    if (!className || !user) return;
+    const q = query(
+      collection(db, 'notifications'),
+      where('targetRole', '==', 'TEACHER'),
+      where('className', '==', className),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setTeacherNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, [className, user]);
+
+  useEffect(() => {
+    if (!className || !user) return;
 
     const q = query(
       collection(db, 'attendance'),
@@ -246,6 +341,20 @@ export default function TeacherDashboard() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'overview';
+  console.log('DEBUG: activeTab is', activeTab);
+  
+  const [subjectAttendances, setSubjectAttendances] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!className || activeTab !== 'subject-attendance-report') return;
+    const q = query(
+      collection(db, 'subjectAttendances'),
+      where('className', '==', className)
+    );
+    getDocs(q).then(snapshot => {
+      setSubjectAttendances(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }).catch(console.error);
+  }, [className, activeTab]);
 
   useEffect(() => {
     if (searchParams.get('showAddModal') === 'true') {
@@ -373,6 +482,10 @@ export default function TeacherDashboard() {
       setWaText('');
       setParsedWAData(null);
       fetchClassData();
+      
+      // Early Warning Check
+      checkAttendanceAlert(payload.studentId, payload.studentName, payload.className).catch(console.error);
+      
       alert(`Berhasil mengimpor data absensi untuk ${payload.studentName}!`);
     } catch (err: any) {
       handleFirestoreError(err, 'create', 'WhatsApp Import');
@@ -394,35 +507,58 @@ export default function TeacherDashboard() {
         documentUrl = await getDownloadURL(snapshot.ref);
       }
 
+      const dates = [];
+      if (addFormData.isRange && addFormData.endDate) {
+        let start = new Date(addFormData.date);
+        let end = new Date(addFormData.endDate);
+        let count = 0;
+        const current = new Date(start);
+        while (current <= end && count < 31) {
+          dates.push(current.toISOString().split('T')[0]);
+          current.setDate(current.getDate() + 1);
+          count++;
+        }
+      } else {
+        dates.push(addFormData.date);
+      }
+
       const student = manualStudents.find(s => s.id === addFormData.studentId);
-      const dateObj = new Date(addFormData.date);
-      const dayName = new Intl.DateTimeFormat('id-ID', { weekday: 'long' }).format(dateObj);
+      
+      for (const dateItem of dates) {
+        const dateObj = new Date(dateItem);
+        const dayName = new Intl.DateTimeFormat('id-ID', { weekday: 'long' }).format(dateObj);
 
-      const payload = {
-        studentId: addFormData.studentId,
-        studentName: student?.name || '',
-        nis: student?.nis || '',
-        className: student?.className || addFormClass || className,
-        date: addFormData.date,
-        day: dayName,
-        type: addFormData.type,
-        reason: addFormData.reason,
-        parentName: user?.name || 'Teacher (Manual Input)',
-        parentPhone: '-',
-        status: 'Approved',
-        statusReason: '',
-        documentUrl: documentUrl,
-        documentName: selectedFile?.name || '',
-        submittedAt: serverTimestamp(),
-      };
+        const payload = {
+          studentId: addFormData.studentId,
+          studentName: student?.name || '',
+          nis: student?.nis || '',
+          className: student?.className || addFormClass || className,
+          date: dateItem,
+          day: dayName,
+          type: addFormData.type,
+          reason: addFormData.reason,
+          parentName: user?.name || 'Teacher (Manual Input)',
+          parentPhone: '-',
+          status: 'Approved',
+          statusReason: '',
+          documentUrl: documentUrl,
+          documentName: selectedFile?.name || '',
+          submittedAt: serverTimestamp(),
+        };
 
-      await addDoc(collection(db, 'attendance'), payload);
+        await addDoc(collection(db, 'attendance'), payload);
+        
+        // Early Warning Check
+        checkAttendanceAlert(payload.studentId, payload.studentName, payload.className).catch(console.error);
+      }
+
       setShowAddModal(false);
       setSearchParams({tab: 'attendance'});
-      setAddFormData({});
+      setAddFormData({ isRange: false });
       setSelectedFile(null);
+      
       fetchClassData();
-      alert('Berhasil menambahkan absensi');
+      alert(`Berhasil menambahkan absensi untuk ${dates.length} hari.`);
     } catch (err: any) {
       handleFirestoreError(err, 'create', 'Manual Attendance');
     }
@@ -457,19 +593,22 @@ export default function TeacherDashboard() {
     if (newStatus === 'Rejected') {
       reason = prompt('Masukkan alasan penolakan:') || '';
       if (!reason) return; // Cancel if no reason provided
+    }
 
-      // Create notification
-      try {
-        await addDoc(collection(db, 'notifications'), {
-          studentId: studentId,
-          title: 'Izin Ditolak',
-          message: `Pengajuan izin Anda ditolak. Alasan: ${reason}`,
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-      } catch (err) {
-        console.error("Error creating notification:", err);
-      }
+    // Create notification
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        studentId: studentId,
+        targetRole: 'PARENT',
+        title: newStatus === 'Approved' ? '✅ Izin Disetujui' : '❌ Izin Ditolak',
+        message: newStatus === 'Approved' 
+          ? `Pengajuan izin Anda telah disetujui oleh Wali Kelas.` 
+          : `Pengajuan izin Anda ditolak oleh Wali Kelas. Alasan: ${reason}`,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Error creating notification:", err);
     }
 
     try {
@@ -480,6 +619,14 @@ export default function TeacherDashboard() {
         processedBy: user?.name || 'Teacher'
       });
       setAttendance(prev => prev.map(item => item.id === id ? { ...item, status: newStatus, statusReason: reason } : item));
+      
+      // Early Warning Check triggered on Approval
+      if (newStatus === 'Approved') {
+        const item = attendance.find(a => a.id === id);
+        if (item) {
+          checkAttendanceAlert(item.studentId, item.studentName, item.className).catch(console.error);
+        }
+      }
     } catch (error) {
       console.error(error);
       alert('Gagal mengupdate status.');
@@ -529,7 +676,7 @@ export default function TeacherDashboard() {
     const matchesSearch = item.studentName.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesDate = !filterDate || item.date === filterDate;
     return matchesFilter && matchesSearch && matchesDate;
-  }).sort((a, b) => a.studentName.localeCompare(b.studentName));
+  });
 
   const getShareMessage = () => {
     const appLink = window.location.origin + '?role=PARENT';
@@ -548,23 +695,35 @@ export default function TeacherDashboard() {
   };
 
   const exportPDF = () => {
-    const doc = new jsPDF();
-    const filterInfo = `Filter: Jenis=${filterType}, Tanggal=${filterDate || 'Semua'}`;
-    
-    doc.setFontSize(16);
-    doc.text(`LAPORAN KETIDAKHADIRAN KELAS ${className}`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Dicetak pada: ${formatDate(new Date())}`, 14, 22);
-    doc.text(filterInfo, 14, 28);
-    
-    autoTable(doc, {
-      startY: 35,
-      head: [['Nama Siswa', 'Tanggal', 'No. WA Ortu', 'Jenis', 'Status', 'Alasan']],
-      body: filteredAttendance.map(a => [a.studentName, a.date, a.parentPhone || '-', a.type, a.status, a.reason]),
-      headStyles: { fillColor: [30, 64, 175] },
-    });
-    
-    doc.save(`Laporan_Absensi_Kelas_${className}_${filterDate || 'all'}.pdf`);
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan laporan PDF...');
+    try {
+      const doc = new jsPDF();
+      const filterInfo = `Filter: Jenis=${filterType}, Tanggal=${filterDate || 'Semua'}`;
+      
+      doc.setFontSize(16);
+      doc.text(`LAPORAN KETIDAKHADIRAN KELAS ${className}`, 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Dicetak pada: ${formatDate(new Date())}`, 14, 22);
+      doc.text(filterInfo, 14, 28);
+      
+      autoTable(doc, {
+        startY: 35,
+        head: [['Nama Siswa', 'Tanggal', 'No. WA Ortu', 'Jenis', 'Status', 'Alasan']],
+        body: filteredAttendance.map(a => [a.studentName, a.date, a.parentPhone || '-', a.type, 'DITERIMA', a.reason]),
+        headStyles: { fillColor: [30, 64, 175] },
+      });
+      
+      doc.save(`Laporan_Absensi_Kelas_${className}_${filterDate || 'all'}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal mengekspor PDF: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
   };
 
   const exportDailyReport = () => {
@@ -573,44 +732,56 @@ export default function TeacherDashboard() {
       return;
     }
 
-    const doc = new jsPDF();
-    doc.setFontSize(16);
-    doc.text(`LAPORAN KEHADIRAN KELAS ${className}`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Tanggal: ${formatDate(new Date(filterDate))}`, 14, 22);
-    doc.text(`SIADPV - SMP NEGERI 2 MAGELANG`, 14, 28);
-    
-    const todayAttendance = attendance.filter(a => a.date === filterDate && a.status === 'Approved');
-    
-    const body = students.map((student, index) => {
-      const att = todayAttendance.find(a => a.studentId === student.id);
-      let status = 'HADIR (H)';
-      if (att) {
-        status = att.type.toUpperCase();
-      }
-      return [index + 1, student.nis, student.name, student.gender, status, att?.reason || '-'];
-    }).sort((a, b) => (a[2] as string).localeCompare(b[2] as string));
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan laporan harian...');
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text(`LAPORAN KEHADIRAN KELAS ${className}`, 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Tanggal: ${formatDate(new Date(filterDate))}`, 14, 22);
+      doc.text(`SIADPV - SMP NEGERI 2 MAGELANG`, 14, 28);
+      
+      const todayAttendance = attendance.filter(a => a.date === filterDate && a.status === 'Approved');
+      
+      const body = students.map((student, index) => {
+        const att = todayAttendance.find(a => a.studentId === student.id);
+        let status = 'HADIR (H)';
+        if (att) {
+          status = att.type.toUpperCase();
+        }
+        return [index + 1, student.nis, student.name, student.gender, status, att?.reason || '-'];
+      }).sort((a, b) => (a[2] as string).localeCompare(b[2] as string));
 
-    autoTable(doc, {
-      startY: 35,
-      head: [['No', 'NIS', 'Nama Siswa', 'L/P', 'Status', 'Keterangan']],
-      body: body,
-      headStyles: { fillColor: [5, 150, 105] },
-      columnStyles: {
-        0: { halign: 'center' },
-        3: { halign: 'center' },
-        4: { fontStyle: 'bold' }
-      }
-    });
+      autoTable(doc, {
+        startY: 35,
+        head: [['No', 'NIS', 'Nama Siswa', 'L/P', 'Status', 'Keterangan']],
+        body: body,
+        headStyles: { fillColor: [5, 150, 105] },
+        columnStyles: {
+          0: { halign: 'center' },
+          3: { halign: 'center' },
+          4: { fontStyle: 'bold' }
+        }
+      });
 
-    const summaryY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text('Ringkasan:', 14, summaryY);
-    doc.text(`Hadir: ${students.length - todayAttendance.length}`, 14, summaryY + 7);
-    doc.text(`Sakit: ${todayAttendance.filter(a => a.type === 'Sakit').length}`, 14, summaryY + 14);
-    doc.text(`Izin: ${todayAttendance.filter(a => a.type === 'Izin').length}`, 14, summaryY + 21);
-    doc.text(`Absen: ${todayAttendance.filter(a => a.type === 'Alpa').length}`, 14, summaryY + 28);
+      const summaryY = (doc as any).lastAutoTable.finalY + 10;
+      doc.text('Ringkasan:', 14, summaryY);
+      doc.text(`Hadir: ${students.length - todayAttendance.length}`, 14, summaryY + 7);
+      doc.text(`Sakit: ${todayAttendance.filter(a => a.type === 'Sakit').length}`, 14, summaryY + 14);
+      doc.text(`Izin: ${todayAttendance.filter(a => a.type === 'Izin').length}`, 14, summaryY + 21);
+      doc.text(`Absen: ${todayAttendance.filter(a => a.type === 'Alpa').length}`, 14, summaryY + 28);
 
-    doc.save(`Laporan_Harian_Kelas_${className}_${filterDate}.pdf`);
+      doc.save(`Laporan_Harian_Kelas_${className}_${filterDate}.pdf`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal mengekspor laporan harian: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
   };
 
   const exportExcel = () => {
@@ -631,10 +802,44 @@ export default function TeacherDashboard() {
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Absensi Filter");
-    XLSX.writeFile(wb, `Absensi_Kelas_${className}_${filterDate || 'all'}.xlsx`);
+    setLoading(true);
+    setStatusMessage('Sedang menyiapkan file Excel...');
+    try {
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Absensi Filter");
+      XLSX.writeFile(wb, `Absensi_Kelas_${className}_${filterDate || 'all'}.xlsx`);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal mengekspor Excel: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  const handleAddStudentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addStudentFormData.name || !addStudentFormData.nis) {
+      alert("Harap lengkapi Nama dan NIS!");
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'students'), {
+        ...addStudentFormData,
+        className: className,
+        createdAt: serverTimestamp(),
+      });
+      setShowAddStudentModal(false);
+      setAddStudentFormData({ name: '', nis: '', nisn: '', gender: 'L' });
+      fetchClassData();
+      alert('Siswa berhasil ditambahkan');
+    } catch (err: any) {
+      handleFirestoreError(err, 'create', 'Student Addition');
+    }
   };
 
   const handleResponseInquiry = async () => {
@@ -646,8 +851,25 @@ export default function TeacherDashboard() {
           sender: user?.name,
           createdAt: new Date()
         }),
+        response: inquiryResponse,
+        respondedBy: user?.name,
+        respondedAt: serverTimestamp(),
         status: 'Dijawab'
       });
+
+      // Notify Subject Teacher
+      if (selectedInquiry.subjectTeacherId || selectedInquiry.subjectTeacherName) {
+        await addDoc(collection(db, 'notifications'), {
+          targetUserId: selectedInquiry.subjectTeacherId || '',
+          targetTeacherName: selectedInquiry.subjectTeacherName || '',
+          title: 'Jawaban Tanya Wali Kelas',
+          message: `Wali Kelas ${className} (${user?.name}) telah menjawab pertanyaan Anda tentang ${selectedInquiry.studentName}: "${inquiryResponse}"`,
+          read: false,
+          type: 'RESPONSE',
+          createdAt: serverTimestamp(),
+        });
+      }
+
       setShowInquiryModal(false);
       setSelectedInquiry(null);
       setInquiryResponse('');
@@ -679,6 +901,44 @@ export default function TeacherDashboard() {
   return (
     <div className="space-y-8">
       <AnimatePresence>
+        {statusMessage && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-full max-w-md px-4">
+            <motion.div 
+              initial={{ opacity: 0, y: -50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -50 }}
+              className={cn(
+                "p-4 rounded-2xl shadow-2xl border flex items-center gap-3",
+                statusMessage.includes('Gagal') ? "bg-red-50 border-red-100 text-red-600" : "bg-blue-600 border-blue-500 text-white"
+              )}
+            >
+              <div className={cn("p-2 rounded-xl", statusMessage.includes('Gagal') ? "bg-red-100" : "bg-white/20")}>
+                <RefreshCw size={20} className="animate-spin" />
+              </div>
+              <p className="text-sm font-bold uppercase tracking-tight">{statusMessage}</p>
+            </motion.div>
+          </div>
+        )}
+
+        {success && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-full max-w-md px-4">
+            <motion.div 
+              initial={{ opacity: 0, y: -50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -50 }}
+              className="bg-green-600 border border-green-500 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3"
+            >
+              <div className="p-2 bg-white/20 rounded-xl">
+                <CheckCircle2 size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold uppercase tracking-tight">Berhasil!</p>
+                <p className="text-[10px] text-green-100 font-bold uppercase opacity-80">Aksi Anda telah berhasil diproses.</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {newAttendanceNotification && (
           <div className="fixed top-20 right-6 z-50">
             <SimpleNotification 
@@ -693,11 +953,69 @@ export default function TeacherDashboard() {
             <SimpleNotification 
               message={newInquiryNotification} 
               onClose={() => setNewInquiryNotification(null)}
-              title="Inquiry Baru"
+              title="Pemberitahuan Baru"
             />
           </div>
         )}
       </AnimatePresence>
+
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+            <Users size={28} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tighter leading-none">Wali Kelas {className}</h1>
+            <p className="text-[10px] font-bold text-gray-400 font-sans uppercase tracking-widest mt-1">{user?.name}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+           <button 
+             onClick={() => setSearchParams({ tab: 'notifications' })}
+             className={cn(
+               "relative p-3 rounded-2xl transition-all border",
+               activeTab === 'notifications' ? "bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-200" : "bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100"
+             )}
+           >
+             <Bell size={24} />
+             {teacherNotifications.filter(n => !n.read).length > 0 && (
+               <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white animate-bounce">
+                 {teacherNotifications.filter(n => !n.read).length}
+               </span>
+             )}
+           </button>
+           
+           <div className="h-10 w-px bg-gray-100 mx-2 hidden md:block" />
+
+           <div className="flex gap-1 bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
+               {[
+                 { id: 'overview', label: 'OVERVIEW', icon: FileText },
+                 { id: 'students', label: 'SISWA', icon: Users },
+                 { id: 'attendance', label: 'ABSENSI', icon: CalendarIcon },
+                 { id: 'inquiries', label: 'TANYA WALI KELAS', icon: MessageCircle, badge: subjectInquiries.filter(i => i.status !== 'Dijawab').length },
+               ].map((tab) => (
+                 <button
+                   key={tab.id}
+                   onClick={() => setSearchParams({ tab: tab.id })}
+                   className={cn(
+                     "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all relative",
+                     activeTab === tab.id ? "bg-white text-blue-600 shadow-sm border border-gray-100" : "text-gray-500 hover:text-gray-700"
+                   )}
+                 >
+                   <tab.icon size={14} />
+                   {tab.label}
+                   {tab.badge && tab.badge > 0 && (
+                     <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[8px] font-black flex items-center justify-center rounded-full border border-white animate-pulse">
+                       {tab.badge}
+                     </span>
+                   )}
+                 </button>
+               ))}
+             </div>
+        </div>
+      </div>
 
       {activeTab === 'overview' && (
         <>
@@ -710,26 +1028,26 @@ export default function TeacherDashboard() {
               { label: 'Dispensasi', value: stats.dispensasi, icon: CheckCircle2, color: 'text-purple-600', bg: 'bg-purple-50' },
               { label: 'Daftar Hadir', value: stats.totalStudents - Math.min(stats.totalStudents, stats.sakit + stats.izin + stats.dispensasi), icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
             ].map((stat, i) => (
-              <div key={stat.label} className={cn(
-                "bg-white p-6 rounded-3xl border border-gray-100 shadow-sm transition-all hover:shadow-md hover:border-blue-100 relative"
+              <div key={`${stat.label}-${i}`} className={cn(
+                "bg-white p-3 rounded-lg border border-gray-100 shadow-sm transition-all hover:shadow-md hover:border-blue-100 relative"
               )}>
-                <div className={`w-12 h-12 ${stat.bg} ${stat.color} rounded-2xl flex items-center justify-center mb-4`}>
-                  <stat.icon size={24} />
+                <div className={`w-8 h-8 ${stat.bg} ${stat.color} rounded-lg flex items-center justify-center mb-2`}>
+                  <stat.icon size={16} />
                 </div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{stat.label}</p>
-                <h4 className="text-2xl font-extrabold text-gray-900">{stat.value}</h4>
+                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">{stat.label}</p>
+                <h4 className="text-lg font-extrabold text-gray-900">{stat.value}</h4>
               </div>
             ))}
           </div>
 
           {/* Siswa Terlambat */}
-          <div className="mb-8 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-             <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider flex items-center gap-2">
-                <Clock size={16} /> Daftar Siswa Terlambat ({filterDate || today})
+          <div className="mb-6 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+             <h3 className="text-xs font-bold text-gray-800 mb-4 uppercase tracking-wider flex items-center gap-2">
+                <Clock size={14} /> DAFTAR SISWA TERLAMBAT ({filterDate || today})
              </h3>
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {attendance.filter(a => a.type === 'Terlambat' && a.date === (filterDate || today)).map(a => (
-                   <div key={a.id} className="flex justify-between items-center p-3 bg-red-50 rounded-lg text-xs border border-red-100">
+                {attendance.filter(a => a.type === 'Terlambat' && a.date === (filterDate || today)).map((a, i) => (
+                   <div key={a.id ? `${a.id}-${i}` : `terlambat-${i}`} className="flex justify-between items-center p-3 bg-red-50 rounded-lg text-xs border border-red-100">
                       <span className="font-semibold">{a.studentName}</span>
                       <span className="font-mono text-red-600">{a.reason || 'Terlambat'}</span>
                    </div>
@@ -740,47 +1058,48 @@ export default function TeacherDashboard() {
              </div>
           </div>
 
-          <div className="flex flex-wrap gap-4 mb-8">
-             <button onClick={() => setShowSendInquiryModal(true)} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-blue-700 shadow-lg transition-all">
-                <MessageCircle size={18} /> Kirim Pertanyaan ke Wali Kelas
+          <div className="flex flex-wrap gap-2 mb-6">
+             <button onClick={() => setShowSendInquiryModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold text-xs flex items-center gap-2 hover:bg-blue-700 shadow-lg transition-all uppercase">
+                <MessageCircle size={14} /> KIRIM PERTANYAAN
              </button>
              <button 
               onClick={() => setShowImportModal(true)}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all font-sans"
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all font-sans uppercase"
              >
-                <MessageCircle size={18} /> Impor Absensi WA
+                <MessageCircle size={14} /> IMPOR ABSENSI WA
              </button>
              <button 
               onClick={shareToWhatsApp}
-              className="px-6 py-3 bg-green-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-green-700 shadow-lg shadow-green-200 transition-all"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold text-xs flex items-center gap-2 hover:bg-green-700 shadow-lg shadow-green-200 transition-all uppercase"
              >
-                <Share2 size={18} /> Bagikan Link Aplikasi
+                <Share2 size={14} /> BAGIKAN LINK
              </button>
              <button 
               onClick={copyShareLink}
-              className="px-6 py-3 bg-white text-blue-600 border border-blue-100 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-blue-50 transition-all"
+              className="px-4 py-2 bg-white text-blue-600 border border-blue-100 rounded-lg font-bold text-xs flex items-center gap-2 hover:bg-blue-50 transition-all uppercase"
              >
-                <Copy size={18} /> Salin Pesan
+                <Copy size={14} /> SALIN PESAN
              </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm relative overflow-hidden">
-               <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider">Ringkasan Kehadiran per Kelas</h3>
+               <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider">RINGKASAN KEHADIRAN PER KELAS</h3>
                <div className="space-y-4">
                  {(() => {
                     const classSummary: any = {};
                     attendance.forEach(a => {
-                        if (!classSummary[a.className]) classSummary[a.className] = { Hadir: 0, Sakit: 0, Izin: 0, Alpa: 0 };
-                        classSummary[a.className][a.type === 'Hadir' ? 'Hadir' : (a.type === 'Sakit' ? 'Sakit' : (a.type === 'Izin' ? 'Izin' : 'Alpa'))]++;
+                        if (!classSummary[a.className]) classSummary[a.className] = { Hadir: 0, Sakit: 0, Izin: 0, Dispensasi: 0, Alpa: 0 };
+                        classSummary[a.className][a.type === 'Sakit' ? 'Sakit' : (a.type === 'Izin' ? 'Izin' : (a.type === 'Dispensasi' ? 'Dispensasi' : (a.type === 'Alpa' ? 'Alpa' : 'Hadir')))]++;
                     });
-                    return Object.entries(classSummary).map(([cls, counts]: any) => (
-                      <div key={cls} className="p-4 bg-gray-50 rounded-2xl">
+                    return Object.entries(classSummary).map(([cls, counts]: any, i) => (
+                      <div key={`${cls}-${i}`} className="p-4 bg-gray-50 rounded-2xl">
                           <p className="font-bold text-gray-900 mb-2">{cls}</p>
-                          <div className="grid grid-cols-4 gap-2 text-center text-[10px] font-bold text-gray-500 uppercase">
+                          <div className="grid grid-cols-5 gap-1 text-center text-[10px] font-bold text-gray-500 uppercase">
                               <div><p className="text-green-600 text-sm">{counts.Hadir}</p>Hadir</div>
                               <div><p className="text-red-600 text-sm">{counts.Sakit}</p>Sakit</div>
                               <div><p className="text-amber-600 text-sm">{counts.Izin}</p>Izin</div>
+                              <div><p className="text-purple-600 text-sm">{counts.Dispensasi}</p>Disp</div>
                               <div><p className="text-gray-600 text-sm">{counts.Alpa}</p>Alpa</div>
                           </div>
                       </div>
@@ -837,7 +1156,7 @@ export default function TeacherDashboard() {
                   </h4>
                   <div className="bg-gray-900/40 p-4 rounded-xl text-[11px] font-mono text-blue-50 leading-relaxed border border-white/10 max-h-40 overflow-y-auto">
                      {getShareMessage().split('\n').map((line, i) => (
-                        <p key={i}>{line}</p>
+                        <p key={`line-${i}`}>{line}</p>
                      ))}
                   </div>
                </div>
@@ -845,7 +1164,7 @@ export default function TeacherDashboard() {
           </div>
 
           {/* Subject Inquiry Section */}
-          {subjectInquiries.filter(i => i.status === 'Unconfirmed' || i.status === 'Unanswered').length > 0 && (
+          {subjectInquiries.filter(i => i.status !== 'Dijawab').length > 0 && (
             <div className="bg-orange-50 border border-orange-100 rounded-3xl p-6 mb-8 mt-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="p-2 bg-orange-600 text-white rounded-xl">
@@ -853,12 +1172,12 @@ export default function TeacherDashboard() {
                 </div>
                 <div>
                   <h4 className="text-lg font-bold text-orange-900">Pertanyaan Guru Mapel</h4>
-                  <p className="text-xs text-orange-700">Ada {subjectInquiries.filter(i => i.status === 'Unconfirmed' || i.status === 'Unanswered').length} pertanyaan yang belum Anda jawab.</p>
+                  <p className="text-xs text-orange-700">Ada {subjectInquiries.filter(i => i.status !== 'Dijawab').length} pertanyaan yang belum Anda jawab.</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {subjectInquiries.filter(i => i.status === 'Unconfirmed' || i.status === 'Unanswered').map(inq => (
-                  <div key={inq.id} className="bg-white p-4 rounded-2xl shadow-sm border border-orange-100 space-y-3">
+                {subjectInquiries.filter(i => i.status !== 'Dijawab').map((inq, i) => (
+                  <div key={inq.id ? `${inq.id}-${i}` : `inq-${i}`} className="bg-white p-4 rounded-2xl shadow-sm border border-orange-100 space-y-3">
                     <div className="flex justify-between items-start">
                       <div>
                         <p className="text-[10px] font-bold text-orange-600 uppercase tracking-widest">{inq.subjectName}</p>
@@ -908,8 +1227,8 @@ export default function TeacherDashboard() {
                   <textarea value={sendInquiryData.message} onChange={e => setSendInquiryData({...sendInquiryData, message: e.target.value})} className="w-full p-2 border rounded-xl" rows={4} required></textarea>
                 </div>
                 <div className="flex justify-end gap-3 mt-4">
-                  <button type="button" onClick={() => setShowSendInquiryModal(false)} className="px-4 py-2 bg-gray-100 rounded-xl font-bold text-gray-700 hover:bg-gray-200">Batal</button>
-                  <button type="submit" className="px-4 py-2 bg-blue-600 rounded-xl font-bold text-white hover:bg-blue-700">Kirim</button>
+                  <button type="button" onClick={() => setShowSendInquiryModal(false)} className="px-4 py-2 bg-gray-100 rounded-xl font-bold text-gray-700 hover:bg-gray-200 uppercase text-xs">BATAL</button>
+                  <button type="submit" className="px-4 py-2 bg-blue-600 rounded-xl font-bold text-white hover:bg-blue-700 uppercase text-xs">KIRIM</button>
                 </div>
              </form>
           </div>
@@ -924,6 +1243,12 @@ export default function TeacherDashboard() {
               <p className="text-sm text-gray-500">Daftar siswa dan sandi orang tua</p>
             </div>
             <div className="flex gap-2">
+              <button 
+                onClick={() => setShowAddStudentModal(true)}
+                className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-bold hover:bg-green-700 transition-all flex items-center gap-1 shadow-sm"
+              >
+                <Plus size={14} /> TAMBAH SISWA
+              </button>
               <button 
                 onClick={() => {
                   const templateData = [
@@ -1030,9 +1355,18 @@ export default function TeacherDashboard() {
                   })
                   .sort((a,b) => a.name.localeCompare(b.name))
                   .map((s, index) => (
-                  <tr key={s.id} className="hover:bg-blue-50/10 transition-colors">
+                  <tr key={s.id ? `${s.id}-${index}` : `student-${index}`} className="hover:bg-blue-50/10 transition-colors">
                     <td className="px-6 py-4 text-sm text-center text-gray-500">{index + 1}</td>
-                    <td className="px-8 py-4 font-bold text-gray-900 text-sm">{s.name}</td>
+                    <td className="px-8 py-4 font-bold text-gray-900 text-sm">
+                      <div className="flex items-center gap-2">
+                        {s.name}
+                        {(s.role === 'PETUGAS_ABSEN_KELAS' || s.isOfficer) && (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase rounded shadow-sm flex items-center gap-1">
+                            Petugas
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-sm">{s.nis}</td>
                     <td className="px-6 py-4">
                       <span className={cn(
@@ -1084,28 +1418,28 @@ export default function TeacherDashboard() {
               <div className="flex flex-wrap items-center gap-3">
                 <button 
                   onClick={() => setShowAddModal(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md shadow-blue-100 uppercase"
                 >
                   <Plus size={18} />
-                  Input Manual
+                  INPUT MANUAL
                 </button>
                 <button 
                   onClick={() => setShowImportModal(true)}
-                  className="px-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-green-700 transition-all shadow-md shadow-green-100"
+                  className="px-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-green-700 transition-all shadow-md shadow-green-100 uppercase"
                 >
                   <MessageCircle size={18} />
-                  Impor WA
+                  IMPOR WA
                 </button>
                  <button 
                   onClick={printLoginCards}
-                  className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-amber-700 transition-all shadow-md shadow-amber-100"
+                  className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-amber-700 transition-all shadow-md shadow-amber-100 uppercase"
                 >
                   <FileText size={18} />
-                  Kartu Login
+                  KARTU LOGIN
                 </button>
                 <button 
                   onClick={exportPDF}
-                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 flex items-center gap-2 hover:bg-gray-100 transition-all"
+                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 flex items-center gap-2 hover:bg-gray-100 transition-all uppercase"
                   title="Unduh laporan (Hasil Filter)"
                 >
                   <FileDown size={18} />
@@ -1113,18 +1447,18 @@ export default function TeacherDashboard() {
                 </button>
                 <button 
                   onClick={exportDailyReport}
-                  className="px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-sm font-bold text-emerald-700 flex items-center gap-2 hover:bg-emerald-100 transition-all"
+                  className="px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-sm font-bold text-emerald-700 flex items-center gap-2 hover:bg-emerald-100 transition-all uppercase"
                   title="Unduh laporan harian lengkap kelas (Hadir & Izin)"
                 >
                   <FileText size={18} />
-                  Laporan Harian
+                  LAPORAN HARIAN
                 </button>
                 <button 
                   onClick={exportExcel}
-                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 flex items-center gap-2 hover:bg-gray-100 transition-all"
+                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 flex items-center gap-2 hover:bg-gray-100 transition-all uppercase"
                 >
                   <Download size={18} />
-                  Excel
+                  EXCEL
                 </button>
               </div>
             </div>
@@ -1141,20 +1475,20 @@ export default function TeacherDashboard() {
                 />
               </div>
               <div className="flex items-center gap-2">
-                 <CalendarIcon className="text-gray-400" size={18} />
+                 <CalendarIcon className="text-gray-400" size={16} />
                  <input 
                   type="date"
                   value={filterDate}
                   onChange={(e) => setFilterDate(e.target.value)}
-                  className="flex-1 p-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                  className="flex-1 p-2 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:ring-2 focus:ring-blue-600 outline-none"
                  />
               </div>
               <div className="flex items-center gap-2">
-                 <Filter className="text-gray-400" size={18} />
+                 <Filter className="text-gray-400" size={16} />
                  <select 
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
-                  className="flex-1 p-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none appearance-none"
+                  className="flex-1 p-2 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:ring-2 focus:ring-blue-600 outline-none appearance-none"
                  >
                    <option value="All">Semua Jenis</option>
                    <option value="Sakit">Sakit</option>
@@ -1164,9 +1498,9 @@ export default function TeacherDashboard() {
                  </select>
               </div>
               <div className="flex items-center gap-2">
-                 <CalendarIcon className="text-gray-400" size={18} />
+                 <CalendarIcon className="text-gray-400" size={16} />
                  <select 
-                  className="flex-1 p-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none appearance-none"
+                  className="flex-1 p-2 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:ring-2 focus:ring-blue-600 outline-none appearance-none"
                   onChange={(e) => {
                     const val = e.target.value;
                     if (val === 'S1') {
@@ -1202,7 +1536,6 @@ export default function TeacherDashboard() {
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">WA Ortu</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Jenis</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Dokumen Pendukung</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                 </tr>
               </thead>
@@ -1212,8 +1545,8 @@ export default function TeacherDashboard() {
                     <td colSpan={8} className="px-8 py-20 text-center text-gray-400 italic">Data absensi tidak ditemukan</td>
                   </tr>
                 ) : (
-                  filteredAttendance.map((item) => (
-                    <tr key={item.id} className="hover:bg-blue-50/10 transition-colors">
+                  filteredAttendance.map((item, i) => (
+                    <tr key={`att-v2-${item.id || i}-${i}`} className="hover:bg-blue-50/10 transition-colors">
                       <td className="px-8 py-4">
                         <div>
                           <p className="font-bold text-gray-900">{item.studentName}</p>
@@ -1244,17 +1577,36 @@ export default function TeacherDashboard() {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <div>
-                          <div className={cn(
-                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold",
-                            item.status === 'Approved' ? "bg-green-100 text-green-600" :
-                            item.status === 'Rejected' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider",
+                            item.status === 'Approved' ? "bg-green-100 text-green-700" :
+                            item.status === 'Rejected' ? "bg-red-100 text-red-700" :
+                            "bg-amber-100 text-amber-700 animate-pulse"
                           )}>
-                            {item.status}
-                          </div>
+                            {item.status || 'Pending'}
+                          </span>
+                          {item.status === 'Pending' && (
+                            <div className="flex gap-1 mt-1">
+                              <button 
+                                onClick={() => handleStatusUpdate(item.id, 'Approved', item.studentId)}
+                                className="p-1 px-2 bg-green-600 text-white rounded text-[9px] font-bold hover:bg-green-700 transition-all shadow-sm"
+                                title="Verifikasi"
+                              >
+                                TERIMA
+                              </button>
+                              <button 
+                                onClick={() => handleStatusUpdate(item.id, 'Rejected', item.studentId)}
+                                className="p-1 px-2 bg-red-600 text-white rounded text-[9px] font-bold hover:bg-red-700 transition-all shadow-sm"
+                                title="Tolak"
+                              >
+                                TOLAK
+                              </button>
+                            </div>
+                          )}
                           {item.status === 'Rejected' && item.statusReason && (
-                            <p className="text-[9px] text-red-500 mt-1 font-medium max-w-[150px] truncate" title={item.statusReason}>
-                              Alasan: {item.statusReason}
+                            <p className="text-[9px] text-red-500 font-bold italic mt-1 max-w-[120px] truncate" title={item.statusReason}>
+                              Ket: {item.statusReason}
                             </p>
                           )}
                         </div>
@@ -1280,26 +1632,15 @@ export default function TeacherDashboard() {
                           <span className="text-[10px] text-gray-400 italic">Tidak ada dokumen</span>
                         )}
                       </td>
+                      <td className="px-6 py-4 text-center">
+                        {item.location ? (
+                          <a href={`https://www.google.com/maps?q=${item.location.latitude},${item.location.longitude}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline flex items-center justify-center gap-1 text-[10px]">
+                             <MapPin size={12} /> Peta
+                          </a>
+                        ) : '-'}
+                      </td>
                       <td className="px-8 py-4 text-right">
                         <div className="flex justify-end gap-2">
-                          {item.status === 'Pending' && (
-                            <>
-                              <button 
-                                onClick={() => handleStatusUpdate(item.id, 'Approved', item.studentId)}
-                                className="p-2 bg-green-50 text-green-600 rounded-xl hover:bg-green-100 transition-colors"
-                                title="Terima"
-                              >
-                                <CheckCircle2 size={18} />
-                              </button>
-                              <button 
-                                onClick={() => handleStatusUpdate(item.id, 'Rejected', item.studentId)}
-                                className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors"
-                                title="Tolak"
-                              >
-                                <XCircle size={18} />
-                              </button>
-                            </>
-                          )}
                           <button 
                             onClick={() => {
                               const std = students.find(s => s.id === item.studentId);
@@ -1331,7 +1672,7 @@ export default function TeacherDashboard() {
                             }}
                             className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 hover:bg-blue-700 transition-all w-full mt-2 uppercase shadow-sm shadow-blue-100"
                           >
-                            <Download size={14} /> Download Dokumen
+                            <Download size={14} /> DOWNLOAD DOKUMEN
                           </button>
                         )}
                       </td>
@@ -1344,23 +1685,154 @@ export default function TeacherDashboard() {
         </div>
       )}
 
-      {activeTab === 'rekap' && (
-        <AttendanceRecapTable 
-          students={students} 
-          attendance={attendance} 
-          showClassFilter={false}
-        />
-      )}
-      
-      {activeTab === 'rekapSemester' && (
-        <SemesterAttendanceRecapTable 
-          students={students} 
-          attendance={attendance} 
-          showClassFilter={false}
-        />
+      {activeTab === 'inquiries' && (
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 animate-in fade-in zoom-in-95 duration-300">
+           <div className="flex justify-between items-center mb-6">
+             <h2 className="text-xl font-black text-gray-900 uppercase tracking-tight">Riwayat TANYA WALI KELAS</h2>
+             <button 
+               onClick={() => setShowSendInquiryModal(true)}
+               className="px-4 py-2 bg-blue-600 text-white rounded-xl font-bold uppercase text-xs hover:bg-blue-700 flex items-center gap-2"
+             >
+               <Plus size={16} /> KIRIM PERTANYAAN
+             </button>
+           </div>
+           <div className="space-y-4">
+             {subjectInquiries.length === 0 ? (
+               <div className="text-center py-10 text-gray-400 font-bold uppercase tracking-widest text-xs">Belum ada data TANYA WALI KELAS.</div>
+             ) : (
+                subjectInquiries.map((inq, idx) => (
+                  <div key={inq.id ? `${inq.id}-${idx}` : `inquiry-hist-${idx}`} className="p-6 rounded-2xl border border-gray-100 bg-gray-50 flex items-start gap-4 hover:border-blue-200 transition-all">
+                    <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
+                      <MessageCircle size={24} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-gray-900">{inq.studentName} <span className="text-gray-400 font-normal">({inq.className})</span></h4>
+                        <span className={cn(
+                          "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                          inq.status === 'Dijawab' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                        )}>{inq.status}</span>
+                      </div>
+                      <p className="text-sm text-gray-600 mt-2">{inq.message}</p>
+                      <p className="text-[10px] text-gray-400 mt-2 uppercase font-bold">
+                        {inq.day && `${inq.day}, `}{inq.date && `${inq.date} `} | Jam ke: {inq.period} {inq.time && `| Waktu: ${inq.time}`} | Mapel: {inq.subjectName}
+                      </p>
+                      
+                      {inq.status !== 'Dijawab' && (
+                        <button 
+                          onClick={() => {
+                            setSelectedInquiry(inq);
+                            setShowInquiryModal(true);
+                          }}
+                          className="mt-3 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-all uppercase tracking-wider shadow-sm flex items-center gap-2 w-fit"
+                        >
+                          <MessageCircle size={12} /> JAWAB
+                        </button>
+                      )}
+                      
+                      {inq.replies && inq.replies.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                           <p className="text-xs font-bold text-gray-700 mb-2 uppercase">Balasan:</p>
+                           {inq.replies.map((r: any, rIdx: number) => (
+                             <div key={`reply-v2-${inq.id}-${r.id || rIdx}-${rIdx}`} className="bg-white p-3 rounded-lg text-sm text-gray-700 mb-2 border border-gray-100">
+                               <p className="text-[10px] text-blue-600 font-bold uppercase">{r.sender}</p>
+                               <p>{r.message}</p>
+                             </div>
+                           ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+             )}
+           </div>
+        </div>
       )}
 
-      {/* Inquiry Response Modal */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-6">
+          <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+             <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-4">
+                   <div className="p-4 bg-blue-100 text-blue-600 rounded-2xl">
+                      <BellRing size={28} />
+                   </div>
+                   <div>
+                      <h2 className="text-xl font-black text-gray-900 uppercase">Notifikasi Kelas {className}</h2>
+                      <p className="text-xs text-gray-500">Daftar pemberitahuan masuk untuk Wali Kelas</p>
+                   </div>
+                </div>
+                <button 
+                  onClick={async () => {
+                    for (const n of teacherNotifications.filter(notif => !notif.read)) {
+                      await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                    }
+                    setTeacherNotifications(prev => prev.map(p => ({...p, read: true})));
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                >
+                  TANDAI SEMUA DIBACA
+                </button>
+             </div>
+
+             <div className="grid grid-cols-1 gap-4">
+                {teacherNotifications.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-20 text-gray-300">
+                     <Bell size={64} className="mb-4 opacity-10" />
+                     <p className="text-sm font-bold uppercase tracking-widest italic">Belum Ada Notifikasi</p>
+                  </div>
+                ) : (
+                  teacherNotifications.map((n, i) => (
+                    <motion.div 
+                      key={`notif-v2-${n.id || i}-${i}`}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={cn(
+                        "p-5 rounded-2xl border transition-all cursor-pointer flex items-start gap-4",
+                        n.read ? "bg-white border-gray-100 opacity-60" : "bg-blue-50/50 border-blue-100 shadow-sm"
+                      )}
+                      onClick={async () => {
+                        if (!n.read) {
+                          await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                          setTeacherNotifications(prev => prev.map(notif => notif.id === n.id ? {...notif, read: true} : notif));
+                        }
+                      }}
+                    >
+                      <div className={cn(
+                        "p-3 rounded-xl shrink-0 mt-1",
+                        n.title?.includes('Izin') ? "bg-amber-100 text-amber-600" : 
+                        n.title?.includes('Status') ? "bg-green-100 text-green-600" :
+                        n.title?.includes('Pesan') ? "bg-indigo-100 text-indigo-600" :
+                        "bg-blue-100 text-blue-600"
+                      )}>
+                        {n.title?.includes('Izin') ? <CalendarIcon size={20} /> : 
+                         n.title?.includes('Status') ? <CheckCircle2 size={20} /> :
+                         n.title?.includes('Pesan') ? <MessageCircle size={20} /> :
+                         <Bell size={20} />}
+                      </div>
+                      <div className="flex-1">
+                         <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-extrabold text-sm text-gray-900 uppercase tracking-tight">{n.title}</h4>
+                            <span className="text-[10px] font-bold text-gray-400">
+                               {n.createdAt?.toDate ? n.createdAt.toDate().toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}
+                            </span>
+                         </div>
+                         <p className="text-xs text-gray-600 leading-relaxed font-medium">
+                            {n.message}
+                         </p>
+                      </div>
+                      {!n.read && (
+                        <div className="w-2.5 h-2.5 bg-blue-600 rounded-full shrink-0 shadow-sm shadow-blue-200 mt-2"></div>
+                      )}
+                    </motion.div>
+                  ))
+                )}
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tanya Wali Kelas Modal */}
       {showInquiryModal && selectedInquiry && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <motion.div 
@@ -1369,7 +1841,7 @@ export default function TeacherDashboard() {
             className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
           >
             <div className="p-6 bg-orange-600 text-white flex items-center justify-between">
-              <h3 className="font-bold text-lg">Detail Inquiry</h3>
+              <h3 className="font-extrabold text-lg uppercase">Detail Tanya Wali Kelas</h3>
               <button 
                 onClick={() => setShowInquiryModal(false)}
                 className="hover:bg-white/20 p-2 rounded-lg transition-colors text-white"
@@ -1392,7 +1864,7 @@ export default function TeacherDashboard() {
                 <div className="space-y-3">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Riwayat Balasan</p>
                   {selectedInquiry.replies.map((reply: any, idx: number) => (
-                    <div key={idx} className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div key={`modal-reply-v2-${selectedInquiry.id}-${reply.id || idx}-${idx}`} className="p-3 bg-gray-50 rounded-xl border border-gray-100">
                         <p className="text-xs font-bold text-gray-800">{reply.sender}</p>
                         <p className="text-sm text-gray-600">{reply.message}</p>
                     </div>
@@ -1424,6 +1896,236 @@ export default function TeacherDashboard() {
           </motion.div>
         </div>
       )}
+      {activeTab === 'attendance-summary' && (
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden mb-6">
+          <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <h3 className="text-lg font-bold text-gray-900 uppercase flex items-center gap-2">
+              <LayoutGrid size={18} />
+              Ringkasan Kehadiran Kelas {className} ({formatDate(new Date(filterDate || today))})
+            </h3>
+            <div className="flex items-center gap-2">
+               <input 
+                 type="date" 
+                 value={filterDate || today}
+                 onChange={(e) => setFilterDate(e.target.value)}
+                 className="p-2 border border-blue-300 rounded text-sm outline-none shadow-sm text-blue-700 font-bold focus:ring-2 focus:ring-blue-100"
+               />
+            </div>
+          </div>
+          <div className="p-6">
+             <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                   <thead>
+                     <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Kelas</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Total Siswa</th>
+                        <th className="px-6 py-3 text-xs font-bold text-green-700 uppercase border-r border-gray-200 text-center">Hadir</th>
+                        <th className="px-6 py-3 text-xs font-bold text-red-700 uppercase border-r border-gray-200 text-center">Sakit</th>
+                        <th className="px-6 py-3 text-xs font-bold text-yellow-700 uppercase border-r border-gray-200 text-center">Izin</th>
+                        <th className="px-6 py-3 text-xs font-bold text-purple-700 uppercase border-r border-gray-200 text-center">Dispensasi</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Alpa</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     <tr className="border-b border-gray-100 hover:bg-gray-50/50">
+                        <td className="px-6 py-4 border-r border-gray-100">
+                           <span className="px-3 py-1 bg-blue-50 text-blue-700 font-bold text-xs rounded-lg border border-blue-100">{className}</span>
+                        </td>
+                        <td className="px-6 py-4 text-center border-r border-gray-100 font-bold">{students.length}</td>
+                        <td className="px-6 py-4 text-center border-r border-gray-100 font-black text-green-600">
+                           {students.length - attendance.filter(a => a.date === (filterDate || today)).length}
+                        </td>
+                        <td className="px-6 py-4 text-center border-r border-gray-100 text-red-600 font-bold">
+                           {attendance.filter(a => a.date === (filterDate || today) && a.type === 'Sakit').length}
+                        </td>
+                        <td className="px-6 py-4 text-center border-r border-gray-100 text-yellow-600 font-bold">
+                           {attendance.filter(a => a.date === (filterDate || today) && a.type === 'Izin').length}
+                        </td>
+                        <td className="px-6 py-4 text-center border-r border-gray-100 text-purple-600 font-bold">
+                           {attendance.filter(a => a.date === (filterDate || today) && a.type === 'Dispensasi').length}
+                        </td>
+                        <td className="px-6 py-4 text-center text-gray-400 font-bold">
+                           {attendance.filter(a => a.date === (filterDate || today) && a.type === 'Alpa').length}
+                        </td>
+                     </tr>
+                   </tbody>
+                </table>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'attendance-detail' && (
+        <div className="mb-6">
+          <AttendanceAlertsDisplay className={className} />
+        </div>
+      )}
+
+      {activeTab === 'rekap' && (
+        <div className="mb-6">
+          <AttendanceRecapTable 
+            students={students} 
+            attendance={attendance} 
+            classes={[{ id: className, name: className }]}
+            showClassFilter={false}
+          />
+        </div>
+      )}
+
+      {activeTab === 'rekapSemester' && (
+        <div className="mb-6">
+          <SemesterAttendanceRecapTable
+            students={students}
+            attendance={attendance}
+            classes={className ? [{ id: className, name: className }] : []}
+            showClassFilter={false}
+          />
+        </div>
+      )}
+
+      {activeTab === 'attendance-individual' && (
+        <div className="mb-6">
+          <IndividualAttendance
+            students={students}
+            attendance={attendance}
+            classes={className ? [{ id: className, name: className }] : []}
+            onAttendanceChange={fetchClassData}
+          />
+        </div>
+      )}
+
+      {activeTab === 'subject-attendance-report' && (
+        <div className="space-y-4 mb-6">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                <input 
+                  type="text"
+                  placeholder="Cari siswa atau mapel..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                <input 
+                  type="month" 
+                  value={filterMonth}
+                  onChange={(e) => setFilterMonth(e.target.value)}
+                  className="p-1.5 border border-gray-200 rounded text-[10px] outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button 
+                  onClick={() => {
+                    if (!filterMonth) return alert('Pilih bulan!');
+                    const filtered = subjectAttendances.filter(att => att.date.startsWith(filterMonth));
+                    const doc = new jsPDF();
+                    doc.text(`Laporan Bulanan Absensi Mapel Kelas ${className} - ${filterMonth}`, 14, 15);
+                    autoTable(doc, {
+                      startY: 20,
+                      head: [['Tanggal', 'Siswa', 'Mapel', 'Jam', 'Status', 'Catatan']],
+                      body: filtered.map(a => [a.date, a.studentName, a.subjectName, a.period, a.status, a.notes || '-'])
+                    });
+                    doc.save(`Laporan_Bulanan_Mapel_${className}_${filterMonth}.pdf`);
+                  }}
+                  className="p-1.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+                >
+                  PDF
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                <select 
+                  value={filterSemester}
+                  onChange={(e) => setFilterSemester(e.target.value)}
+                  className="p-1.5 border border-gray-200 rounded text-[10px] outline-none"
+                >
+                  <option value="1">Semester 1</option>
+                  <option value="2">Semester 2</option>
+                </select>
+                <button 
+                  onClick={() => {
+                    const months = filterSemester === '1' ? ['07','08','09','10','11','12'] : ['01','02','03','04','05','06'];
+                    const filtered = subjectAttendances.filter(att => {
+                       const m = att.date.split('-')[1];
+                       return months.includes(m);
+                    });
+                    const doc = new jsPDF();
+                    doc.text(`Laporan Semester ${filterSemester} Absensi Mapel Kelas ${className}`, 14, 15);
+                    autoTable(doc, {
+                      startY: 20,
+                      head: [['Tanggal', 'Siswa', 'Mapel', 'Jam', 'Status']],
+                      body: filtered.map(a => [a.date, a.studentName, a.subjectName, a.period, a.status])
+                    });
+                    doc.save(`Laporan_Semester_${filterSemester}_Mapel_${className}.pdf`);
+                  }}
+                  className="p-1.5 bg-indigo-600 text-white rounded text-[10px] font-bold hover:bg-indigo-700"
+                >
+                  PDF
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tanggal</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Siswa</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Mata Pelajaran</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Guru</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Jam</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Kehadiran</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Catatan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {subjectAttendances
+                    .filter(a => 
+                      !searchQuery || 
+                      a.studentName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      a.subjectName?.toLowerCase().includes(searchQuery.toLowerCase())
+                    )
+                    .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                    .slice(0, 100)
+                    .map((att, idx) => (
+                    <tr key={`subj-att-${att.id}-${idx}`} className="hover:bg-blue-50/20 transition-colors">
+                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatDate(new Date(att.date))}</td>
+                      <td className="px-4 py-3 text-xs font-bold text-gray-900">{att.studentName}</td>
+                      <td className="px-4 py-3 text-xs font-bold text-blue-600">{att.subjectName}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{att.teacherId}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">Jam ke-{att.period}</td>
+                      <td className="px-4 py-3">
+                        <span className={cn(
+                          "px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider inline-block",
+                          att.status === 'H' ? "bg-green-100 text-green-700 border border-green-200" :
+                          att.status === 'S' ? "bg-blue-100 text-blue-700 border border-blue-200" :
+                          att.status === 'I' ? "bg-yellow-100 text-yellow-700 border border-yellow-200" :
+                          "bg-red-100 text-red-700 border border-red-200"
+                        )}>
+                          {att.status === 'H' ? 'HADIR' : att.status === 'S' ? 'SAKIT' : att.status === 'I' ? 'IZIN' : 'ALPA'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500 italic">{att.notes || '-'}</td>
+                    </tr>
+                  ))}
+                  {subjectAttendances.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-400 text-sm">
+                        Belum ada data absensi guru mapel.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Manual Attendance Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -1439,41 +2141,58 @@ export default function TeacherDashboard() {
               </button>
             </div>
             <form onSubmit={handleAddSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Kelas</label>
-                <select 
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-                  value={addFormClass}
-                  onChange={e => {
-                    setAddFormClass(e.target.value);
-                    setAddFormData({...addFormData, studentId: ''}); // reset student selection
-                  }}
-                  required
-                >
-                  <option value="">Pilih Kelas</option>
-                  {[...allClasses].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric:true})).map(c => (
-                    <option key={c.id} value={c.name}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Siswa</label>
-                <select 
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-                  value={addFormData.studentId || ''}
-                  onChange={e => setAddFormData({...addFormData, studentId: e.target.value})}
-                  required
-                  disabled={!addFormClass}
-                >
-                  <option value="">Pilih Siswa</option>
-                  {manualStudents.map(s => (
-                    <option key={s.id} value={s.id}>{s.name} - {s.nis}</option>
-                  ))}
-                </select>
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Tanggal</label>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Kelas</label>
+                  <select 
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    value={addFormClass}
+                    onChange={e => {
+                      setAddFormClass(e.target.value);
+                      setAddFormData({...addFormData, studentId: ''}); // reset student selection
+                    }}
+                    required
+                  >
+                    <option value="">Pilih Kelas</option>
+                    {[...allClasses].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric:true})).map((c, i) => (
+                      <option key={`opt-class-v2-${c.id || i}-${i}`} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Siswa</label>
+                  <select 
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    value={addFormData.studentId || ''}
+                    onChange={e => setAddFormData({...addFormData, studentId: e.target.value})}
+                    required
+                    disabled={!addFormClass}
+                  >
+                    <option value="">Pilih Siswa</option>
+                    {manualStudents.map((s, i) => (
+                      <option key={`opt-std-v2-${s.id || i}-${i}`} value={s.id}>{s.name} - {s.nis}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50 mb-2">
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="checkbox" 
+                    id="isRangeManual"
+                    checked={addFormData.isRange || false}
+                    onChange={e => setAddFormData({...addFormData, isRange: e.target.checked})}
+                    className="w-4 h-4 rounded border-blue-200 text-blue-600 focus:ring-blue-500"
+                  />
+                  <label htmlFor="isRangeManual" className="text-xs font-bold text-blue-800 cursor-pointer">Izin lebih dari 1 hari?</label>
+                </div>
+              </div>
+
+              <div className={cn("grid gap-4", addFormData.isRange ? "grid-cols-2" : "grid-cols-1")}>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">
+                    {addFormData.isRange ? 'Mulai Tanggal' : 'Tanggal'}
+                  </label>
                   <input 
                     type="date"
                     required
@@ -1482,6 +2201,20 @@ export default function TeacherDashboard() {
                     className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
                   />
                 </div>
+                {addFormData.isRange && (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Sampai Tanggal</label>
+                    <input 
+                      type="date"
+                      required
+                      value={addFormData.endDate || ''}
+                      onChange={e => setAddFormData({...addFormData, endDate: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Jenis</label>
                   <select 
@@ -1497,27 +2230,27 @@ export default function TeacherDashboard() {
                     <option value="Alpa">Alpa</option>
                   </select>
                 </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Dok. Pendukung (PDF/IMG)</label>
+                  <input 
+                    type="file" 
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs focus:ring-2 focus:ring-blue-600 outline-none"
+                  />
+                </div>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Alasan</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Alasan / Keterangan (Opsional)</label>
                 <textarea 
-                  required
-                  rows={3}
+                  rows={2}
+                  placeholder="Berikan alasan sakit atau keterangan izin..."
                   value={addFormData.reason || ''}
                   onChange={e => setAddFormData({...addFormData, reason: e.target.value})}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
                 />
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Dokumen Pendukung (PDF/PNG/JPG) - Opsional</label>
-                <input 
-                  type="file" 
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  onChange={e => setSelectedFile(e.target.files?.[0] || null)}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-                />
-              </div>
-              <button type="submit" className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors mt-4">
+              <button type="submit" className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors mt-2">
                 Simpan Kehadiran
               </button>
             </form>
@@ -1562,8 +2295,8 @@ export default function TeacherDashboard() {
                     Belum ada rekaman ketidakhadiran bulan ini.
                   </div>
                 ) : (
-                  studentAttendanceHistory.map(att => (
-                    <div key={att.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between">
+                  studentAttendanceHistory.map((att, i) => (
+                    <div key={`att-hist-v2-${att.id || i}-${i}`} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <span className={cn(
@@ -1661,7 +2394,7 @@ export default function TeacherDashboard() {
             <div className="p-6 bg-green-600 text-white flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <MessageCircle size={24} />
-                <h3 className="font-bold text-lg text-white">Impor Pesan WhatsApp</h3>
+                <h3 className="font-bold text-lg text-white uppercase">Impor Pesan WhatsApp</h3>
               </div>
               <button 
                 onClick={() => {
@@ -1767,6 +2500,27 @@ export default function TeacherDashboard() {
               </button>
             </div>
           </motion.div>
+        </div>
+      )}
+
+      {showAddStudentModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+            <div className="bg-white rounded-3xl p-8 max-w-sm w-full space-y-6">
+                <h3 className="text-xl font-black uppercase tracking-tight">TAMBAH SISWA BARU</h3>
+                <form onSubmit={handleAddStudentSubmit} className="space-y-4">
+                    <input type="text" placeholder="Nama Lengkap" className="w-full p-3 border border-gray-200 rounded-xl text-sm" value={addStudentFormData.name} onChange={e => setAddStudentFormData({...addStudentFormData, name: e.target.value})} required />
+                    <input type="text" placeholder="NIS" className="w-full p-3 border border-gray-200 rounded-xl text-sm" value={addStudentFormData.nis} onChange={e => setAddStudentFormData({...addStudentFormData, nis: e.target.value})} required />
+                    <input type="text" placeholder="NISN" className="w-full p-3 border border-gray-200 rounded-xl text-sm" value={addStudentFormData.nisn} onChange={e => setAddStudentFormData({...addStudentFormData, nisn: e.target.value})} />
+                    <select className="w-full p-3 border border-gray-200 rounded-xl text-sm" value={addStudentFormData.gender} onChange={e => setAddStudentFormData({...addStudentFormData, gender: e.target.value})}>
+                        <option value="L">Laki-laki</option>
+                        <option value="P">Perempuan</option>
+                    </select>
+                    <div className="flex gap-2">
+                        <button type="button" onClick={() => setShowAddStudentModal(false)} className="flex-1 p-3 rounded-xl border border-gray-200 text-xs font-bold uppercase">Batal</button>
+                        <button type="submit" className="flex-1 p-3 rounded-xl bg-blue-600 text-white text-xs font-bold uppercase">Simpan</button>
+                    </div>
+                </form>
+            </div>
         </div>
       )}
 

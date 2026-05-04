@@ -6,6 +6,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+// export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
@@ -45,12 +46,4 @@ export function handleFirestoreError(error: any, operationType: FirestoreErrorIn
   throw new Error(JSON.stringify(errorInfo));
 }
 
-// CRITICAL: Test connection on boot
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    console.error("Firebase connection test failed:", error);
-  }
-}
-testConnection();
+

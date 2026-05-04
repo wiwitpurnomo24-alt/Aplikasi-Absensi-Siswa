@@ -1,0 +1,5 @@
+90:      setActiveTab('attendance-summary');
+92:      setActiveTab(tabParam);
+94:      setActiveTab('overview');
+2948:                    onClick={() => setActiveTab('attendance-detail')}
+3034:                      onClick={() => setActiveTab('attendance-detail')}

@@ -6,6 +6,16 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+@layer components {
+  .dashboard-card {
+    @apply bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden transition-all hover:shadow-md;
+  }
+  
+  .dashboard-button {
+    @apply px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md shadow-blue-100 disabled:opacity-50 disabled:shadow-none;
+  }
+}
+
 @layer base {
   body {
     @apply font-sans;
