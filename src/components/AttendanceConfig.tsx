@@ -90,7 +90,8 @@ export const AttendanceConfig: React.FC = () => {
         if (s.id === id) {
           const updated = { ...s, [field]: value };
           if (field === 'date' && value) {
-            const dateObj = new Date(value);
+            const [year, month, day] = value.split('-').map(Number);
+            const dateObj = new Date(year, month - 1, day);
             const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
             updated.day = days[dateObj.getDay()];
           }
@@ -102,13 +103,13 @@ export const AttendanceConfig: React.FC = () => {
   };
 
   return (
-    <div className="bg-white p-5 rounded-2xl border border-sky-100 shadow-xl shadow-sky-100/50 space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div className="flex items-center gap-2 pb-3 border-b border-sky-50">
-        <div className="p-2 bg-sky-100 text-sky-600 rounded-lg">
-           <Clock size={18} />
+    <div className="bg-white p-4 rounded-2xl border border-sky-100 shadow-xl shadow-sky-100/50 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="flex items-center gap-2 pb-2 border-b border-sky-50">
+        <div className="p-1.5 bg-sky-100 text-sky-600 rounded-lg">
+           <Clock size={16} />
         </div>
         <div>
-          <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">Waktu Operasional Sekolah</h3>
+          <h3 className="text-xs font-black text-gray-900 uppercase tracking-tight">Waktu Operasional Sekolah</h3>
           <p className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">Atur Jam Masuk & Pulang Harian</p>
         </div>
       </div>

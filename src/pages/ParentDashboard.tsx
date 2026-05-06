@@ -237,6 +237,8 @@ export default function ParentDashboard() {
         `Nama Siswa: ${student.name}\n` +
         `NIS: ${student.nis}\n` +
         `Kelas: ${student.className}\n` +
+        `Wali Kelas: ${teacherName}\n` +
+        `Nomor WA Wali Kelas: ${teacherPhone}\n` +
         `Jenis: ${data.type}\n` +
         `Nama Ortu: ${data.parentName}\n` +
         `Nomor WA Ortu: ${data.parentPhone}\n` +

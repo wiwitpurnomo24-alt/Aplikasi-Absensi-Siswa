@@ -24,7 +24,7 @@ export default function AttendanceChart({ attendance }: AttendanceChartProps) {
 
     return (
         <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-100 h-full">
-            <h3 className="text-xs font-bold text-gray-800 mb-2 uppercase tracking-wider">Distribusi Absensi Per Kelas</h3>
+            <h3 className="text-xs font-bold text-gray-800 mb-2 uppercase tracking-wider">Rekapitulasi Absensi Siswa Per Kelas</h3>
             <ResponsiveContainer width="100%" height={150}>
                 <BarChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />

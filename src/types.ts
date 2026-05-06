@@ -58,6 +58,7 @@ export interface AttendanceRecord {
   submittedAt: any;
   status: 'Pending' | 'Approved' | 'Rejected';
   statusReason?: string;
+  notes?: string;
   processedAt?: any;
   processedBy?: string;
 }

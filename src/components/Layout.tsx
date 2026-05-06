@@ -260,6 +260,8 @@ export default function Layout() {
         { name: 'DATA ABSENSI', path: '/teacher?tab=attendance', icon: CheckCircle2, role: ['TEACHER'] },
         { name: 'RINGKASAN KEHADIRAN', path: '/admin?tab=attendance-summary', icon: LayoutGrid, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'RINGKASAN KEHADIRAN', path: '/teacher?tab=attendance-summary', icon: LayoutGrid, role: ['TEACHER'] },
+        { name: 'REKAP MINGGUAN', path: '/admin?tab=weekly-recap', icon: Calendar, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-600 font-bold" },
+        { name: 'REKAP MINGGUAN', path: '/teacher?tab=weekly-recap', icon: Calendar, role: ['TEACHER'], className: "text-blue-600 font-bold" },
         { name: 'DETAIL KETIDAKHADIRAN', path: '/admin?tab=attendance-detail', icon: ClipboardList, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'DETAIL KETIDAKHADIRAN', path: '/teacher?tab=attendance-detail', icon: ClipboardList, role: ['TEACHER'] },
         { name: 'REKAP ABSENSI PERBULAN', path: '/admin?tab=rekap', icon: FileText, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
@@ -318,7 +320,7 @@ export default function Layout() {
             )}
             <div className="overflow-hidden">
               <h1 className="text-sm font-black leading-tight truncate">{schoolData?.sekolah || 'SMPN 2 MAGELANG'}</h1>
-              <p className="text-[9px] text-blue-500 uppercase tracking-widest font-black opacity-90">Sistem Absensi</p>
+              <p className="text-[7px] text-blue-500 uppercase tracking-tight font-black opacity-90 whitespace-nowrap overflow-hidden text-ellipsis">SISTEM INFORMASI ADMINISTRASI PRESENSI</p>
             </div>
           </div>
         </div>
@@ -362,12 +364,12 @@ export default function Layout() {
                   </button>
                   {isOpen && (
                     <div className="pl-4 space-y-1">
-                      {item.subItems.map((sub) => {
+                      {item.subItems.filter(sub => sub.role.includes(user?.role || '')).map((sub) => {
                         const isSubActive = location.pathname + location.search === sub.path || 
                                            (location.pathname === sub.path && sub.path.indexOf('?') === -1);
                         return (
                           <Link
-                            key={`sub-nav-${item.name}-${sub.name}`}
+                            key={`sub-nav-${sub.path}`}
                             to={sub.path!}
                             onClick={() => setIsMobileSidebarOpen(false)}
                             className={cn(

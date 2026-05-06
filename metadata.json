@@ -1,6 +1,6 @@
 {
-  "name": "Absensi Siswa SMPN 2 Magelang",
-  "description": "Sistem informasi absensi siswa terintegrasi WhatsApp untuk SMP Negeri 2 Magelang.",
+  "name": "SIAP | Sistem Informasi Administrasi Presensi",
+  "description": "Sistem Informasi Administrasi Presensi (SIAP) untuk manajemen absensi sekolah digital yang profesional dan terintegrasi.",
   "requestFramePermissions": ["geolocation", "camera", "hid"],
   "majorCapabilities": []
 }

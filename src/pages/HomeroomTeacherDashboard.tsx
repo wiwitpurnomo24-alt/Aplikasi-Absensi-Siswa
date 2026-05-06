@@ -13,6 +13,7 @@ import AttendanceRecapTable from '../components/AttendanceRecapTable';
 import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
 import { Student, AttendanceRecord } from '../types';
 import { cn } from '../lib/utils';
+import Loading from '../components/Loading';
 
 export default function HomeroomTeacherDashboard() {
   const { user } = useAuthStore();
@@ -22,6 +23,24 @@ export default function HomeroomTeacherDashboard() {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'inquiry' | 'monitoring' | 'monthly' | 'semester'>('inquiry');
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  useEffect(() => {
+    if (!user || !user.className) return;
+    
+    const q = query(
+        collection(db, 'notifications'),
+        where('className', '==', user.className),
+        orderBy('createdAt', 'desc')
+    );
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    
+    return unsubscribe;
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -106,7 +125,7 @@ export default function HomeroomTeacherDashboard() {
     }
   };
 
-  if (loading) return <div className="p-10 text-center">Memuat...</div>;
+  if (loading) return <Loading />;
 
   return (
     <div className="p-6 space-y-6">

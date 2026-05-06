@@ -12,6 +12,8 @@ export default function LogoSettings() {
   const [logoUrl, setLogoUrl] = useState('');
   const [schoolDataId, setSchoolDataId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('');
+  const [isError, setIsError] = useState(false);
 
   useEffect(() => {
     async function fetchSchoolData() {
@@ -49,13 +51,22 @@ export default function LogoSettings() {
 
   const handleSave = async () => {
     try {
-      if (!schoolDataId) { alert('Data sekolah tidak ditemukan'); return; }
+      if (!schoolDataId) { 
+        setStatus('Data sekolah tidak ditemukan.');
+        setIsError(true);
+        setTimeout(() => setStatus(''), 3000);
+        return; 
+      }
       await updateDoc(doc(db, 'schoolData', schoolDataId), { logoUrl });
       setIsLocked(true);
-      alert('Logo berhasil diperbarui!');
+      setStatus('Konfigurasi berhasil disimpan.');
+      setIsError(false);
+      setTimeout(() => setStatus(''), 3000);
     } catch (e) {
       console.error(e);
-      alert('Gagal menyimpan logo.');
+      setStatus('Gagal menyimpan konfigurasi.');
+      setIsError(true);
+      setTimeout(() => setStatus(''), 3000);
     }
   }
 
@@ -145,12 +156,22 @@ export default function LogoSettings() {
               )}
             </div>
 
-            <button 
-              onClick={handleSave} 
-              className="w-full flex items-center justify-center gap-3 bg-green-600 text-white p-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-green-700 active:scale-[0.98] transition-all shadow-xl shadow-green-100"
-            >
-                <Save size={18}/> SIMPAN PERUBAHAN LOGO
-            </button>
+            <div className="space-y-4">
+              <button 
+                onClick={handleSave} 
+                className="w-full flex items-center justify-center gap-3 bg-green-600 text-white p-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-green-700 active:scale-[0.98] transition-all shadow-xl shadow-green-100"
+              >
+                  <Save size={18}/> SIMPAN PERUBAHAN LOGO
+              </button>
+              
+              {status && (
+                <div className="flex justify-center h-4">
+                   <span className={cn("text-[9px] font-black uppercase tracking-widest animate-in fade-in slide-in-from-top-1", isError ? "text-red-500" : "text-green-600")}>
+                    {status}
+                   </span>
+                </div>
+              )}
+            </div>
         </div>
       )}
     </div>

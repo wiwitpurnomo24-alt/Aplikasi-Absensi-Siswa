@@ -1,10 +1,11 @@
+// Trivial comment to force rebuild
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Timestamp, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Timestamp, doc, getDoc, getDocs, query, where, updateDoc } from 'firebase/firestore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +58,61 @@ async function startServer() {
     } catch (error) {
       console.error('Error creating notification:', error);
       res.status(500).json({ error: "Failed to create notification" });
+    }
+  });
+
+  // Attendance Leave Request Status Update
+  app.post("/api/attendance/approve-leave", async (req, res) => {
+    try {
+      const { attendanceId, status, statusReason, notes, studentId, studentName, className, parentPhone, type } = req.body;
+      
+      if (!attendanceId || !status || !studentId || !parentPhone) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      // Update Attendance Status in Firestore
+      await updateDoc(doc(db, 'attendance', attendanceId), {
+        status,
+        statusReason: statusReason || '',
+        notes: notes || '',
+        processedAt: Timestamp.now()
+      });
+
+      // Notify via WhatsApp
+      const waConfigDoc = await getDoc(doc(db, 'systemSettings', 'whatsappConfig'));
+      if (waConfigDoc.exists()) {
+          const waSettings = waConfigDoc.data();
+          const message = status === 'Approved'
+              ? `Halo, permohonan izin ${type} untuk ${studentName} dari kelas ${className} telah DISETUJUI.`
+              : `Halo, permohonan izin ${type} untuk ${studentName} dari kelas ${className} DITOLAK. Alasan: ${statusReason || 'Tidak ada alasan'}`;
+          
+          await fetch(waSettings.apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${waSettings.apiKey}` },
+              body: JSON.stringify({
+                  to: parentPhone,
+                  message: message,
+                  sender: waSettings.senderNumber
+              })
+          }).catch(e => console.error("WhatsApp failed", e));
+      }
+      
+      // Notify via Dashboard (notifications collection) for the parent (or just notify teacher/admin)
+       await addDoc(collection(db, 'notifications'), {
+        targetRole: 'PARENT',
+        studentId: studentId,
+        studentName: studentName,
+        message: `Izin ${type} Anda telah ${status === 'Approved' ? 'DISETUJUI' : 'DITOLAK'}.`,
+        title: 'Status Izin Absensi',
+        read: false,
+        type: 'ATTENDANCE_STATUS',
+        createdAt: Timestamp.now()
+      });
+
+      res.status(200).json({ status: "success" });
+    } catch (error) {
+      console.error('Error updating leave status:', error);
+      res.status(500).json({ error: "Failed to update leave status" });
     }
   });
 

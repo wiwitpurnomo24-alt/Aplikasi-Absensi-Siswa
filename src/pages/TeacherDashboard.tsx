@@ -45,6 +45,7 @@ import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import SimpleNotification from '../components/SimpleNotification';
 import IndividualAttendance from '../components/IndividualAttendance';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
+import WeeklyAttendanceRecap from '../components/WeeklyAttendanceRecap';
 
 export default function TeacherDashboard() {
   const { user, login } = useAuthStore();
@@ -1991,6 +1992,16 @@ export default function TeacherDashboard() {
             classes={className ? [{ id: className, name: className }] : []}
             onAttendanceChange={fetchClassData}
           />
+        </div>
+      )}
+
+      {activeTab === 'weekly-recap' && (
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-6">
+           <WeeklyAttendanceRecap 
+             attendance={attendance} 
+             students={students} 
+             selectedClass={className} 
+           />
         </div>
       )}
 

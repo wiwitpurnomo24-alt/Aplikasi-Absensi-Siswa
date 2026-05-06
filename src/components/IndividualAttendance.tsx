@@ -37,6 +37,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
   const [editStatus, setEditStatus] = useState<string>('');
   const [editType, setEditType] = useState<string>('');
   const [editReason, setEditReason] = useState<string>('');
+  const [editNotes, setEditNotes] = useState<string>('');
 
   const classStudents = useMemo(() => {
     if (!selectedClass) return [];
@@ -98,15 +99,32 @@ export default function IndividualAttendance({ students, attendance, classes, on
     setEditStatus(record.status);
     setEditType(record.type);
     setEditReason(record.reason || '');
+    setEditNotes(record.notes || '');
   };
 
   const handleSave = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'attendance', id), {
-        status: editStatus,
-        type: editType,
-        reason: editReason
+      const record = filteredAttendance.find(a => a.id === id);
+      if (!record) return;
+
+      const response = await fetch('/api/attendance/approve-leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attendanceId: id,
+          status: editStatus,
+          statusReason: editReason,
+          notes: editNotes,
+          studentId: record.studentId,
+          studentName: record.studentName,
+          className: record.className,
+          parentPhone: record.parentPhone,
+          type: editType
+        })
       });
+      
+      if (!response.ok) throw new Error("Gagal mengupdate status via API");
+
       setEditingId(null);
       onAttendanceChange();
     } catch (err: any) {
@@ -141,12 +159,13 @@ export default function IndividualAttendance({ students, attendance, classes, on
       a.type.toUpperCase(),
       a.status === 'Approved' ? 'Diterima' : a.status === 'Rejected' ? 'Ditolak' : 'Diterima',
       a.reason || '-',
+      a.notes || '-',
       a.teacherName || '-'
     ]);
 
     autoTable(doc, {
       startY: 35,
-      head: [['Tanggal', 'Jenis', 'Status Validasi', 'Alasan', 'Pencatat']],
+      head: [['Tanggal', 'Jenis', 'Status Validasi', 'Alasan', 'Catatan', 'Pencatat']],
       body: body,
       headStyles: { fillColor: [41, 128, 185] },
     });
@@ -330,6 +349,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jenis</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status Validasi</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alasan</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Catatan</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pencatat</th>
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
               </tr>
@@ -358,6 +378,9 @@ export default function IndividualAttendance({ students, attendance, classes, on
                         <td className="px-6 py-4 text-sm text-gray-500">
                            <input type="text" className="border p-1 rounded w-full" value={editReason} onChange={e => setEditReason(e.target.value)} />
                         </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                           <input type="text" className="border p-1 rounded w-full" value={editNotes} onChange={e => setEditNotes(e.target.value)} />
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.teacherName || '-'}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-2">
                            <button onClick={() => handleSave(record.id!)} className="text-green-600 hover:text-green-900 bg-green-50 px-2 py-1 rounded text-xs">SIMPAN</button>
@@ -383,6 +406,9 @@ export default function IndividualAttendance({ students, attendance, classes, on
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">
                            {record.reason || '-'}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                           {record.notes || '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                            {record.teacherName || '-'}

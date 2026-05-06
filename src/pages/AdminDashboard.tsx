@@ -49,10 +49,11 @@ import { Student, Teacher, AcademicYear, AttendanceRecord } from '../types';
 import { useAuthStore } from '../lib/auth-store';
 import * as XLSX from 'xlsx';
 import { parseWhatsAppMessage } from '../lib/whatsapp-parser';
-import { ROLE_LABELS, CLASS_COLORS, CLASS_ICONS } from '../constants';
+import { ROLE_LABELS, CLASS_COLORS } from '../constants';
 import { useSearchParams } from 'react-router-dom';
 import AttendanceRecapTable from '../components/AttendanceRecapTable';
 import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
+import WeeklyAttendanceRecap from '../components/WeeklyAttendanceRecap';
 import IndividualAttendance from '../components/IndividualAttendance';
 import AttendanceChart from '../components/AttendanceChart';
 import AttendanceTrendChart from '../components/AttendanceTrendChart';
@@ -87,7 +88,7 @@ export default function AdminDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as any;
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'weekly-recap' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
   const [filterMonth, setFilterMonth] = useState('');
   const [filterSemester, setFilterSemester] = useState('');
 
@@ -5258,6 +5259,15 @@ export default function AdminDashboard() {
             />
           )}
 
+          {activeTab === 'weekly-recap' && (
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+               <WeeklyAttendanceRecap 
+                 attendance={attendance} 
+                 students={students} 
+               />
+            </div>
+          )}
+
           {activeTab === 'school' && (
             <SchoolDataSettings />
           )}
@@ -5757,14 +5767,6 @@ export default function AdminDashboard() {
                       >
                          <option value="">-- Pilih Warna --</option>
                          {CLASS_COLORS.map(c => <option key={c} value={c}>{c.replace('text-', '')}</option>)}
-                      </select>
-                      <select 
-                        className="w-full p-3 border border-gray-100 rounded-xl outline-none"
-                        value={formData.icon || ''}
-                        onChange={e => setFormData({...formData, icon: e.target.value})}
-                      >
-                         <option value="">-- Pilih Ikon --</option>
-                         {CLASS_ICONS.map(i => <option key={i} value={i}>{i}</option>)}
                       </select>
                     </>
                  )}

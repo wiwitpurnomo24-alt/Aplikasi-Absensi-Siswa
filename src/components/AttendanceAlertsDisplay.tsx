@@ -12,16 +12,14 @@ export default function AttendanceAlertsDisplay({ className }: { className?: str
     useEffect(() => {
         if (!user) return;
 
-        let q = query(collection(db, 'attendance_alerts'), orderBy('createdAt', 'desc'));
-        if (className) {
-            // Cannot use where combined with orderBy on a different field without composite index,
-            // but we can filter it clientside since alerts are usually few, or if we define where('className')
-            // we should just fetch and map. We will use where('className') if possible.
-            // But let's just do it cleanly.
-        }
-
+        const q = query(collection(db, 'attendance_alerts'), orderBy('createdAt', 'desc'));
+        
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            let data = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
+            let data = snapshot.docs.map(doc => ({ 
+                id: doc.id, 
+                ...(doc.data() as any),
+                createdAt: doc.data().createdAt?.toDate()
+            }));
             if (className) {
                 data = data.filter(a => a.className === className);
             }
@@ -30,23 +28,33 @@ export default function AttendanceAlertsDisplay({ className }: { className?: str
             handleFirestoreError(err, 'list', 'attendance_alerts');
         });
         return () => unsubscribe();
-    }, [user]);
-
-    if (alerts.length === 0) return null;
+    }, [user, className]);
 
     if (alerts.length === 0) return null;
 
     return (
-        <div className="bg-red-50 border border-red-200 p-4 rounded-xl shadow-sm mb-6">
-            <div className="flex items-center gap-2 mb-3">
-                <AlertTriangle className="text-red-600" size={20} />
-                <h3 className="text-sm font-bold text-red-800">Peringatan Kehadiran Siswa</h3>
+        <div className="bg-white border border-red-100 rounded-2xl shadow-sm overflow-hidden mb-6">
+            <div className="flex items-center gap-2 p-4 bg-red-50/50 border-b border-red-100">
+                <AlertTriangle className="text-red-500" size={18} />
+                <h3 className="text-sm font-black text-red-900 uppercase tracking-widest">Peringatan Kehadiran</h3>
             </div>
-            <div className="space-y-2">
+            <div className="divide-y divide-gray-100">
                 {alerts.map(alert => (
-                    <div key={`att-alert-${alert.id}`} className="bg-white p-3 rounded-lg border border-red-100 text-xs text-red-900">
-                        <p className="font-semibold">{alert.studentName} ({alert.className})</p>
-                        <p>{alert.details || alert.message}</p>
+                    <div key={`att-alert-${alert.id}`} className="p-4 flex gap-3 hover:bg-gray-50 transition-colors">
+                        <div className="mt-0.5">
+                            <div className="w-2 h-2 rounded-full bg-red-400"></div>
+                        </div>
+                        <div className="space-y-0.5">
+                            <p className="font-bold text-gray-900 text-sm">
+                                {alert.studentName} <span className="font-normal text-gray-500">• {alert.className}</span>
+                            </p>
+                            <p className="text-xs text-gray-600">{alert.details || alert.message}</p>
+                            {alert.createdAt && (
+                                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                    {alert.createdAt.toLocaleDateString('id-ID')} {alert.createdAt.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                            )}
+                        </div>
                     </div>
                 ))}
             </div>

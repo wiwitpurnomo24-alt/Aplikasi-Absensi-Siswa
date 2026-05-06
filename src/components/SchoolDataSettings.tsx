@@ -20,6 +20,7 @@ export default function SchoolDataSettings() {
     logoUrl: '',
     schoolLogoUrl: ''
   });
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     async function fetchSchoolData() {
@@ -43,6 +44,7 @@ export default function SchoolDataSettings() {
     e.preventDefault();
     setSaving(true);
     setSuccess(false);
+    setErrorMessage('');
     try {
       if (schoolData.id) {
         await updateDoc(doc(db, 'schoolData', schoolData.id), { ...schoolData });
@@ -55,7 +57,8 @@ export default function SchoolDataSettings() {
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       console.error('Error saving school data:', error);
-      alert('Gagal menyimpan data sekolah');
+      setErrorMessage('Gagal menyimpan data sekolah.');
+      setTimeout(() => setErrorMessage(''), 3000);
     } finally {
       setSaving(false);
     }
@@ -227,8 +230,28 @@ export default function SchoolDataSettings() {
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <div className="text-[8px] font-bold text-sky-300 uppercase tracking-widest leading-none">
-              * Pastikan data sesuai SK terakhir
+            <div className="flex flex-col gap-1">
+              <div className="text-[8px] font-bold text-sky-300 uppercase tracking-widest leading-none">
+                * Pastikan data sesuai SK terakhir
+              </div>
+              {success && (
+                <motion.span 
+                  initial={{ opacity: 0, y: 5 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="text-[9px] font-black text-green-600 uppercase tracking-widest"
+                >
+                  Konfigurasi berhasil disimpan.
+                </motion.span>
+              )}
+              {errorMessage && (
+                <motion.span 
+                  initial={{ opacity: 0, y: 5 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="text-[9px] font-black text-red-500 uppercase tracking-widest"
+                >
+                  {errorMessage}
+                </motion.span>
+              )}
             </div>
             <button
               type="submit"

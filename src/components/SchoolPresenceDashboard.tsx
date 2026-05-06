@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, handleFirestoreError } from '../lib/firebase';
 import { collection, query, onSnapshot, orderBy, getDocs, where, doc, deleteDoc, updateDoc, Timestamp, addDoc } from 'firebase/firestore';
-import { Download, Filter, FileText, UserCheck, Edit, Trash2, Eye, Scan, Camera } from 'lucide-react';
+import { Download, Filter, FileText, UserCheck, Edit, Trash2, Eye, Scan, Camera, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import { cn, formatDate, getTimeSafe } from '../lib/utils';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -467,26 +467,26 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 )}
             </AnimatePresence>
 
-            <div className="bg-indigo-600 p-6 rounded-2xl shadow-lg shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative">
+            <div className="bg-indigo-600 p-4 rounded-2xl shadow-lg shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-4 overflow-hidden relative">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-32 -mt-32 blur-3xl"></div>
                 <div className="z-10">
-                    <h3 className="text-xl font-black text-white mb-1 uppercase tracking-tight">Scanner Aktif</h3>
-                    <p className="text-indigo-100 text-sm font-medium">Aplikasi sedang mendengarkan input dari hardware scanner.</p>
+                    <h3 className="text-lg font-black text-white mb-0.5 uppercase tracking-tight">Scanner Aktif</h3>
+                    <p className="text-indigo-100 text-xs font-medium">Aplikasi sedang mendengarkan input dari hardware scanner.</p>
                 </div>
-                <div className="z-10 flex items-center gap-3 w-full md:w-auto">
+                <div className="z-10 flex items-center gap-2 w-full md:w-auto">
                     <button 
                         onClick={() => setShowCameraScanner(true)}
-                        className="px-4 py-3.5 bg-white text-indigo-600 rounded-xl font-black text-sm flex items-center gap-2 hover:bg-indigo-50 transition-all shadow-sm shrink-0 whitespace-nowrap"
+                        className="px-3 py-2 bg-white text-indigo-600 rounded-lg font-black text-[10px] flex items-center gap-2 hover:bg-indigo-50 transition-all shadow-sm shrink-0 whitespace-nowrap"
                     >
-                        <Camera size={18} /> SCAN KAMERA
+                        <Camera size={14} /> SCAN KAMERA
                     </button>
-                    <div className="relative flex-1 md:w-64">
-                        <Scan className="absolute left-3 top-3.5 text-indigo-400" size={18} />
+                    <div className="relative flex-1 md:w-48">
+                        <Scan className="absolute left-3 top-2.5 text-indigo-400" size={14} />
                         <input 
                             ref={inputRef}
                             type="text" 
-                            className="w-full pl-10 pr-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder:text-white/40 focus:bg-white/20 focus:outline-none transition-all font-bold"
-                            placeholder="Input ID manual / Scan disini..."
+                            className="w-full pl-9 pr-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder:text-white/40 focus:bg-white/20 focus:outline-none transition-all font-bold text-[10px]"
+                            placeholder="Input ID / Scan..."
                             value={scannerInput}
                             onChange={(e) => setScannerInput(e.target.value)}
                             onKeyDown={(e) => {
@@ -537,40 +537,48 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 <PresenceSemesterReport students={students} presence={presence} />
             ) : (
                 <div className="bg-white p-6 rounded-xl border border-gray-200">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-sm font-bold uppercase tracking-widest text-gray-800">Laporan Kehadiran</h3>
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                    {(() => {
+                        const dailyStats = paginatedData.length > 0 ? filteredData.filter(d => d.dateStr === filterDate) : filteredData;
+                        const totalStudents = students.length;
+                        const present = dailyStats.filter(d => d.arrivalStatus !== '-').length;
+                        const late = dailyStats.filter(d => d.arrivalStatus === 'Terlambat').length;
+                        const absent = totalStudents - present;
+                        return (
+                            <>
+                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100"><p className="text-[9px] uppercase font-bold text-blue-400">Total Siswa</p><p className="text-xl font-black text-blue-900">{totalStudents}</p></div>
+                                <div className="bg-green-50 p-3 rounded-xl border border-green-100"><p className="text-[9px] uppercase font-bold text-green-400">Hadir</p><p className="text-xl font-black text-green-900">{present}</p></div>
+                                <div className="bg-orange-50 p-3 rounded-xl border border-orange-100"><p className="text-[9px] uppercase font-bold text-orange-400">Terlambat</p><p className="text-xl font-black text-orange-900">{late}</p></div>
+                                <div className="bg-red-50 p-3 rounded-xl border border-red-100"><p className="text-[9px] uppercase font-bold text-red-400">Belum Datang</p><p className="text-xl font-black text-red-900">{absent}</p></div>
+                            </>
+                        );
+                    })()}
+                </div>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-gray-800">Laporan Kehadiran</h3>
                     <div className="flex gap-2">
-                        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="p-2 border rounded text-xs">
+                        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="p-1.5 border rounded text-[10px]">
                             <option value="daily">Harian</option>
                             <option value="weekly">Mingguan</option>
                             <option value="monthly">Bulanan</option>
                             <option value="semester">Semester</option>
                         </select>
-                        <select value={filterClass} onChange={(e) => { setFilterClass(e.target.value); setFilterStudent(''); }} className="p-2 border rounded text-xs">
+                        <select value={filterClass} onChange={(e) => { setFilterClass(e.target.value); setFilterStudent(''); }} className="p-1.5 border rounded text-[10px]">
                             <option value="">Semua Kelas</option>
                             {classes.map(c => <option key={`class-filter-${c}`} value={c}>{c}</option>)}
                         </select>
-                        <select value={filterStudent} onChange={(e) => setFilterStudent(e.target.value)} className="p-2 border rounded text-xs">
+                        <select value={filterStudent} onChange={(e) => setFilterStudent(e.target.value)} className="p-1.5 border rounded text-[10px]">
                             <option value="">Semua Siswa</option>
                             {studentList.map(s => <option key={`student-filter-${s.id}`} value={s.id}>{s.name}</option>)}
                         </select>
-                        <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="p-2 border rounded text-xs" />
-                        <button onClick={exportToPDF} className="flex items-center gap-1 px-3 py-2 bg-red-600 text-white rounded text-xs font-bold"><FileText size={14}/> PDF</button>
-                        <button onClick={exportToExcel} className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded text-xs font-bold"><Download size={14}/> Excel</button>
+                        <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="p-1.5 border rounded text-[10px]" />
+                        <button onClick={exportToPDF} className="flex items-center gap-1 px-2 py-1.5 bg-red-600 text-white rounded text-[10px] font-bold"><FileText size={12}/> PDF</button>
+                        <button onClick={exportToExcel} className="flex items-center gap-1 px-2 py-1.5 bg-green-600 text-white rounded text-[10px] font-bold"><Download size={12}/> Excel</button>
                         {selectedIds.length > 0 && (
-                            <button onClick={handleDeleteSelected} className="flex items-center gap-1 px-3 py-2 bg-red-500 text-white rounded text-xs font-bold hover:bg-red-600 transition-colors">
-                                <Trash2 size={14}/> Hapus ({selectedIds.length})
+                            <button onClick={handleDeleteSelected} className="flex items-center gap-1 px-2 py-1.5 bg-red-500 text-white rounded text-[10px] font-bold hover:bg-red-600 transition-colors">
+                                <Trash2 size={12}/> Hapus ({selectedIds.length})
                             </button>
                         )}
-                        <button onClick={async () => {
-                            const randomStudent = students[Math.floor(Math.random() * students.length)];
-                            if (!randomStudent) return alert('Tidak ada siswa untuk demo.');
-                            await fetch('/api/webhook/attendance-scan', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ studentId: randomStudent.id, type: Math.random() > 0.5 ? 'arrival' : 'departure' })
-                            });
-                        }} className="flex items-center gap-1 px-3 py-2 bg-purple-600 text-white rounded text-xs font-bold"><Filter size={14}/> Demo Mode</button>
                     </div>
                 </div>
 
@@ -647,7 +655,11 @@ export const SchoolPresenceDashboard: React.FC = () => {
                                 <td className="p-3 text-center font-medium">{p.arrivalTimestamp ? p.arrivalTimestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                                 <td className="p-3 text-center">
                                     {p.arrivalStatus !== '-' ? (
-                                        <span className={cn("px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider", p.arrivalStatus.toLowerCase() === 'terlambat' ? 'bg-orange-100 text-orange-700' : p.arrivalStatus.toLowerCase() === 'hadir' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700')}>
+                                        <span className={cn("px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 w-fit", 
+                                            p.arrivalStatus.toLowerCase() === 'terlambat' ? 'bg-orange-100 text-orange-700' : 
+                                            p.arrivalStatus.toLowerCase() === 'hadir' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                                        )}>
+                                            {p.arrivalStatus.toLowerCase() === 'terlambat' ? <Clock size={12} /> : p.arrivalStatus.toLowerCase() === 'hadir' ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
                                             {p.arrivalStatus}
                                         </span>
                                     ) : <span className="text-gray-300">-</span>}

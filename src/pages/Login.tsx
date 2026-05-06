@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { School, UserCircle, Users, Settings, LogIn, ShieldCheck, ArrowRight, GraduationCap, ClipboardList, Eye, EyeOff, Scan, X, Camera } from 'lucide-react';
+import { School, UserCircle, LogIn, ShieldCheck, ArrowRight, Eye, EyeOff, Scan, X, Camera, CheckCircle2, BarChart3, Clock, Bell } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -328,38 +328,48 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col md:flex-row font-sans">
       {/* Visual Side */}
-      <div className="hidden md:flex md:w-1/2 bg-blue-700 p-16 flex-col justify-between relative overflow-hidden">
+      <div className="hidden md:flex md:w-1/2 bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 p-16 flex-col justify-between relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-4 text-white mb-12">
             <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-xl">
               <School size={40} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">SMPN 2 MAGELANG</h1>
-              <p className="text-blue-100/60 text-sm font-medium">Sistem Absensi Online</p>
+              <h1 className="text-2xl font-bold tracking-tight">SIAP</h1>
+              <p className="text-blue-200 text-sm font-medium">Sistem Informasi Administrasi Presensi</p>
             </div>
           </div>
           
-          <h2 className="text-5xl font-extrabold text-white leading-tight mb-6">
-            Input Absensi <br/> Kini <span className="text-blue-300">Lebih Mudah.</span>
+          <h2 className="text-4xl font-extrabold text-white leading-tight mb-10">
+            Digitalisasi Absensi <br/> <span className="text-blue-300">Sekolah Anda</span>
           </h2>
-          <p className="text-blue-100 text-lg max-w-md leading-relaxed">
-            Terintegrasi langsung dengan WhatsApp untuk kemudahan pelaporan izin siswa oleh orang tua dan wali murid.
-          </p>
+          <ul className="space-y-6 text-blue-50 text-lg max-w-md">
+            <li className="flex items-start gap-4">
+                <CheckCircle2 className="mt-1 text-blue-400 flex-shrink-0" size={20} />
+                <span>Monitoring kehadiran siswa dan guru real-time</span>
+            </li>
+            <li className="flex items-start gap-4">
+                <BarChart3 className="mt-1 text-blue-400 flex-shrink-0" size={20} />
+                <span>Analisis laporan absensi akurat</span>
+            </li>
+            <li className="flex items-start gap-4">
+                <Clock className="mt-1 text-blue-400 flex-shrink-0" size={20} />
+                <span>Manajemen izin dan dispensasi efisien</span>
+            </li>
+            <li className="flex items-start gap-4">
+                <Bell className="mt-1 text-blue-400 flex-shrink-0" size={20} />
+                <span>Notifikasi otomatis ke orang tua</span>
+            </li>
+          </ul>
         </div>
 
-        <div className="relative z-10 flex items-center gap-6">
-           <div className="flex -space-x-3">
-              {[1,2,3,4].map(i => (
-                <div key={`login-avatar-${i}`} className="w-10 h-10 rounded-full border-2 border-blue-700 bg-blue-200" />
-              ))}
-           </div>
-           <p className="text-sm text-blue-100 font-medium">Dipercaya oleh ribuan siswa & guru</p>
+        <div className="relative z-10 text-blue-200/50 text-xs font-bold uppercase tracking-widest">
+            © 2026 SIAP | Sistem Informasi Administrasi Presensi
         </div>
 
         {/* Decorative elements */}
-        <div className="absolute top-0 right-0 w-96 h-96 bg-blue-600 rounded-full blur-3xl -mr-48 -mt-48 opacity-50" />
-        <div className="absolute bottom-0 left-0 w-80 h-80 bg-blue-800 rounded-full blur-3xl -ml-40 -mb-40 opacity-50" />
+        <div className="absolute top-0 right-0 w-96 h-96 bg-blue-600 rounded-full blur-3xl -mr-48 -mt-48 opacity-20" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-blue-800 rounded-full blur-3xl -ml-40 -mb-40 opacity-20" />
       </div>
 
       {/* Login Side */}
@@ -375,12 +385,11 @@ export default function Login() {
                   <School size={32} />
                </div>
             </div>
-            <h3 className="text-3xl font-extrabold text-[#343a40] tracking-tight mb-2">SIADPV - SMPN 2</h3>
+            <h3 className="text-3xl font-extrabold text-[#343a40] tracking-tight mb-2">SIAP</h3>
             <p className="text-sm font-bold text-blue-600 uppercase tracking-widest">Akses Masuk Sistem</p>
             <div className="h-1 w-12 bg-blue-600 mx-auto mt-4 rounded-full"></div>
           </div>
 
-// Role Picker removed
           <div className="flex flex-wrap gap-1 p-1 bg-gray-100 rounded-2xl mb-8">
             <h2 className="text-sm font-bold text-gray-700 w-full text-center py-2">Silakan Masuk</h2>
           </div>
@@ -477,21 +486,11 @@ export default function Login() {
                 Masuk dengan Google (Administrator)
               </button>
 
-            <div className="mt-8 pt-8 border-t border-gray-50">
-               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center mb-4">Akses Cepat (Mode Demo)</p>
-               <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => handleQuickLogin('ADMIN', 'wiwitpurnomo24@guru.smp.belajar.id')} className="p-2 text-[10px] font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors col-span-2">LOGIN ADMIN (WIWIT)</button>
-                  <button type="button" onClick={() => handleQuickLogin('ADMIN', 'admin')} className="p-2 text-[10px] font-bold bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors">DEMO ADMIN</button>
-                  <button type="button" onClick={() => handleQuickLogin('TEACHER', 'wali-demo')} className="p-2 text-[10px] font-bold bg-green-50 text-green-600 rounded-xl hover:bg-green-100 transition-colors">LOGIN WALI KELAS</button>
-                  <button type="button" onClick={() => handleQuickLogin('PARENT', '12345')} className="p-2 text-[10px] font-bold bg-orange-50 text-orange-600 rounded-xl hover:bg-orange-100 transition-colors">LOGIN ORANG TUA</button>
-                  <button type="button" onClick={() => handleQuickLogin('COUNSELOR', 'bk-demo')} className="p-2 text-[10px] font-bold bg-purple-50 text-purple-600 rounded-xl hover:bg-purple-100 transition-colors">LOGIN GURU BK</button>
-                  <button type="button" onClick={() => handleQuickLogin('SUBJECT_TEACHER', 'mapel')} className="p-2 text-[10px] font-bold bg-cyan-50 text-cyan-600 rounded-xl hover:bg-cyan-100 transition-colors col-span-2">LOGIN GURU MAPEL</button>
-               </div>
-            </div>
+
           </form>
 
           <p className="text-center mt-12 text-sm text-gray-400">
-            Lupa data akses? Silakan hubungi <span className="text-blue-700 font-medium">Biro IT SMPN 2</span>
+            Lupa data akses? Silakan hubungi <span className="text-blue-700 font-medium">Pusat Layanan SIAP</span>
           </p>
         </motion.div>
       </div>

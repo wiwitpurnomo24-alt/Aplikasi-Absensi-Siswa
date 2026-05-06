@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { db, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { Save } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 export const WhatsAppSettings: React.FC = () => {
   const [settings, setSettings] = useState({
@@ -37,6 +38,7 @@ export const WhatsAppSettings: React.FC = () => {
     } catch (error) {
       handleFirestoreError(error, 'write', 'systemSettings/whatsappConfig');
       setStatus('Gagal menyimpan konfigurasi.');
+      setTimeout(() => setStatus(''), 3000);
     } finally {
       setLoading(false);
     }
@@ -86,17 +88,17 @@ export const WhatsAppSettings: React.FC = () => {
           />
         </div>
         
-        <div className="flex items-center justify-between pt-4">
+        <div className="flex items-center justify-between pt-4 min-h-[60px]">
            {status && (
              <motion.p 
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              className="text-xs font-black text-sky-600 uppercase"
+              className={cn("text-xs font-black uppercase", status.includes('Gagal') ? "text-red-500" : "text-green-600")}
              >
                 {status}
              </motion.p>
            )}
-           <div className={!status ? "ml-auto" : ""}>
+           <div className="ml-auto">
              <button
                onClick={handleSave}
                disabled={loading}
