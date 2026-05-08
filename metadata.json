@@ -1,6 +1,9 @@
 {
-  "name": "SIAP | Sistem Informasi Administrasi Presensi",
-  "description": "Sistem Informasi Administrasi Presensi (SIAP) untuk manajemen absensi sekolah digital yang profesional dan terintegrasi.",
-  "requestFramePermissions": ["geolocation", "camera", "hid"],
+  "name": "SIAGA | Sistem Informasi Administrasi Giat Absensi",
+  "description": "SIAGA (Sistem Informasi Administrasi Giat Absensi) adalah sistem manajemen kehadiran sekolah yang bersemangat, tegas, dan profesional untuk membangun kedisiplinan generasi masa depan.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
   "majorCapabilities": []
 }

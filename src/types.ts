@@ -61,6 +61,7 @@ export interface AttendanceRecord {
   notes?: string;
   processedAt?: any;
   processedBy?: string;
+  processedById?: string;
 }
 
 export interface SchoolData {
@@ -103,6 +104,8 @@ export interface SubjectAttendance {
   status: 'S' | 'I' | 'D' | 'A' | 'H';
   notes?: string;
   createdAt: any;
+  processedBy?: string;
+  processedById?: string;
 }
 
 export interface SubjectTeacherInquiry {
@@ -129,6 +132,8 @@ export interface SubjectTeacherInquiry {
   }[];
   createdAt: any;
   category?: 'Pertanyaan' | 'Konfirmasi';
+  processedBy?: string;
+  processedById?: string;
 }
 
 export interface AttendanceAlert {
@@ -148,6 +153,7 @@ export interface UserProfile {
   uid: string;
   role: UserRole; // Currently active role
   roles: UserRole[]; // All available roles
+  schoolId: string;
   nis?: string;
   nip?: string;
   email?: string;
@@ -155,4 +161,6 @@ export interface UserProfile {
   className?: string; // For parents and teachers
   managedClasses?: string[]; // For counselors
   subject?: string; // For subject teachers
+  subjects?: string[]; // For detailed subject list
+  taughtClasses?: string[]; // For subject teachers' classes
 }

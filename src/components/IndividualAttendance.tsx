@@ -9,6 +9,8 @@ import * as XLSX from 'xlsx';
 import { formatDate } from '../lib/utils';
 import { startOfWeek, endOfWeek, format, isWithinInterval, parseISO } from 'date-fns';
 import { id } from 'date-fns/locale';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
+import { useAuthStore } from '../lib/auth-store';
 
 interface IndividualAttendanceProps {
   students: Student[];
@@ -18,6 +20,7 @@ interface IndividualAttendanceProps {
 }
 
 export default function IndividualAttendance({ students, attendance, classes, onAttendanceChange }: IndividualAttendanceProps) {
+  const { user } = useAuthStore();
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [period, setPeriod] = useState<'mingguan' | 'bulanan' | 'semester'>('bulanan');
@@ -86,7 +89,7 @@ export default function IndividualAttendance({ students, attendance, classes, on
   const handleDelete = async (id: string) => {
     if (window.confirm("Apakah Anda yakin ingin menghapus data ini?")) {
       try {
-        await deleteDoc(doc(db, 'attendance', id));
+        await deleteDoc(getTenantDoc('attendance', id));
         onAttendanceChange();
       } catch (err: any) {
         alert("Gagal menghapus data: " + err.message);
@@ -119,7 +122,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
           studentName: record.studentName,
           className: record.className,
           parentPhone: record.parentPhone,
-          type: editType
+          type: editType,
+          schoolId: user?.schoolId || 'default',
+          processedBy: user?.name,
+          processedById: user?.uid
         })
       });
       
@@ -206,35 +212,35 @@ export default function IndividualAttendance({ students, attendance, classes, on
   };
 
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <Calendar className="text-blue-600" />
+    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+          <Calendar size={18} className="text-blue-600" />
           Absensi Individual
         </h2>
         {filteredAttendance.length > 0 && selectedStudent && (
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <button 
               onClick={exportExcel}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition-all flex items-center gap-2"
+              className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-bold hover:bg-green-700 transition-all flex items-center gap-1.5"
             >
-              <Download size={16} /> DOWNLOAD EXCEL
+              <Download size={14} /> EXCEL
             </button>
             <button 
               onClick={exportPDF}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-all flex items-center gap-2"
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-bold hover:bg-red-700 transition-all flex items-center gap-1.5"
             >
-              <FileDown size={16} /> DOWNLOAD PDF
+              <FileDown size={14} /> PDF
             </button>
           </div>
         )}
       </div>
 
-      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 flex flex-wrap gap-4">
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Pilih Kelas</label>
+      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-4 flex flex-wrap gap-3">
+        <div className="flex-1 min-w-[150px]">
+          <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Pilih Kelas</label>
           <select
-            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
             value={selectedClass}
             onChange={(e) => {
                setSelectedClass(e.target.value);
@@ -248,10 +254,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
           </select>
         </div>
 
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Pilih Siswa</label>
+        <div className="flex-1 min-w-[150px]">
+          <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Pilih Siswa</label>
           <select
-            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:bg-gray-100"
+            className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:bg-gray-100"
             value={selectedStudent}
             onChange={(e) => setSelectedStudent(e.target.value)}
             disabled={!selectedClass}
@@ -263,10 +269,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
           </select>
         </div>
 
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Periode Laporan</label>
+        <div className="flex-1 min-w-[150px]">
+          <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Periode Laporan</label>
           <select
-            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
             value={period}
             onChange={(e) => setPeriod(e.target.value as any)}
           >
@@ -277,11 +283,11 @@ export default function IndividualAttendance({ students, attendance, classes, on
         </div>
 
         {period === 'mingguan' && (
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Pilih Tanggal di Minggu Ini</label>
+          <div className="flex-1 min-w-[150px]">
+            <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Pilih Tanggal</label>
             <input 
               type="date"
-              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
               value={selectedWeek}
               onChange={(e) => setSelectedWeek(e.target.value)}
             />
@@ -290,10 +296,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
 
         {period === 'bulanan' && (
           <>
-            <div className="flex-1 min-w-[150px]">
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Bulan</label>
+            <div className="flex-1 min-w-[120px]">
+              <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Bulan</label>
               <select
-                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
               >
@@ -302,10 +308,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
                 ))}
               </select>
             </div>
-            <div className="flex-1 min-w-[100px]">
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Tahun</label>
+            <div className="flex-1 min-w-[80px]">
+              <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Tahun</label>
               <select
-                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                  value={selectedYear}
                  onChange={(e) => setSelectedYear(e.target.value)}
               >
@@ -317,10 +323,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
         )}
 
         {period === 'semester' && (
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Semester</label>
+          <div className="flex-1 min-w-[150px]">
+            <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 ml-1">Semester</label>
             <select
-              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className="w-full p-1.5 border border-gray-200 rounded-lg text-[11px] font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
               value={selectedSemester}
               onChange={(e) => setSelectedSemester(e.target.value as any)}
             >
@@ -332,98 +338,97 @@ export default function IndividualAttendance({ students, attendance, classes, on
       </div>
 
       {!selectedStudent ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-          <Calendar className="mx-auto h-12 w-12 text-gray-300 mb-2" />
-          <p className="text-gray-500">Silakan pilih kelas dan siswa terlebih dahulu untuk melihat absen.</p>
+        <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+          <Calendar className="mx-auto h-8 w-8 text-gray-300 mb-2" />
+          <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Silakan pilih kelas dan siswa terlebih dahulu</p>
         </div>
       ) : Object.keys(filteredAttendance).length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-          <p className="text-gray-500">Tidak ada riwayat ketidakhadiran pada periode ini.</p>
+        <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+          <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Tidak ada riwayat ketidakhadiran</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-100">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jenis</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status Validasi</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alasan</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Catatan</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pencatat</th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Tanggal</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Jenis</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan</th>
+                <th className="px-4 py-2 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Pencatat</th>
+                <th className="px-4 py-2 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Aksi</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-50">
               {filteredAttendance.map((record) => (
-                <tr key={`att-row-${record.id}`} className="hover:bg-gray-50">
+                <tr key={`att-row-${record.id}`} className="hover:bg-gray-50/50 transition-colors">
                   {editingId === record.id ? (
                      <>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(record.date)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                           <select className="border p-1 rounded" value={editType} onChange={e => setEditType(e.target.value)}>
+                        <td className="px-4 py-2 whitespace-nowrap text-xs font-bold text-gray-700">{formatDate(record.date)}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-xs">
+                           <select className="border border-gray-200 p-1 rounded-md text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={editType} onChange={e => setEditType(e.target.value)}>
                               <option value="sakit">Sakit</option>
                               <option value="izin">Izin</option>
                               <option value="dispensasi">Dispensasi</option>
                               <option value="alpha">Alpha</option>
                            </select>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                           <select className="border p-1 rounded" value={editStatus} onChange={e => setEditStatus(e.target.value)}>
-
+                        <td className="px-4 py-2 whitespace-nowrap text-xs">
+                           <select className="border border-gray-200 p-1 rounded-md text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={editStatus} onChange={e => setEditStatus(e.target.value)}>
                               <option value="Approved">Diterima</option>
                               <option value="Rejected">Ditolak</option>
                            </select>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                           <input type="text" className="border p-1 rounded w-full" value={editReason} onChange={e => setEditReason(e.target.value)} />
+                        <td className="px-4 py-2 text-xs">
+                           <input type="text" className="border border-gray-200 p-1 rounded-md w-full text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={editReason} onChange={e => setEditReason(e.target.value)} />
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                           <input type="text" className="border p-1 rounded w-full" value={editNotes} onChange={e => setEditNotes(e.target.value)} />
+                        <td className="px-4 py-2 text-xs">
+                           <input type="text" className="border border-gray-200 p-1 rounded-md w-full text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={editNotes} onChange={e => setEditNotes(e.target.value)} />
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.teacherName || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-2">
-                           <button onClick={() => handleSave(record.id!)} className="text-green-600 hover:text-green-900 bg-green-50 px-2 py-1 rounded text-xs">SIMPAN</button>
-                           <button onClick={() => setEditingId(null)} className="text-gray-600 hover:text-gray-900 bg-gray-100 px-2 py-1 rounded text-xs">BATAL</button>
+                        <td className="px-4 py-2 whitespace-nowrap text-xs font-bold text-gray-400">{record.teacherName || '-'}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-center space-x-1.5">
+                           <button onClick={() => handleSave(record.id!)} className="text-green-600 hover:text-green-900 bg-green-50 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest">SIMPAN</button>
+                           <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-gray-900 bg-gray-100 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest">BATAL</button>
                         </td>
                      </>
                   ) : (
                      <>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                        <td className="px-4 py-2 whitespace-nowrap text-xs font-bold text-gray-800">
                            {formatDate(record.date)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 uppercase font-bold">
+                        <td className="px-4 py-2 whitespace-nowrap text-[10px] font-black text-gray-500 uppercase tracking-widest">
                            {record.type}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-4 py-2 whitespace-nowrap">
                            {record.status === 'Approved' ? (
-                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">Diterima</span>
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[9px] font-black uppercase tracking-widest">Diterima</span>
                            ) : record.status === 'Rejected' ? (
-                              <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">Ditolak</span>
+                              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-black uppercase tracking-widest">Ditolak</span>
                            ) : (
-                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">Diterima</span>
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[9px] font-black uppercase tracking-widest">Diterima</span>
                            )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
+                        <td className="px-4 py-2 text-[11px] font-bold text-gray-500">
                            {record.reason || '-'}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
+                        <td className="px-4 py-2 text-[11px] font-bold text-gray-400 italic">
                            {record.notes || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-4 py-2 whitespace-nowrap text-[10px] font-bold text-gray-400">
                            {record.teacherName || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-2">
+                        <td className="px-4 py-2 whitespace-nowrap text-center space-x-1">
                            <button 
                              onClick={() => handleEdit(record)} 
-                             className="text-blue-600 hover:text-blue-900 transition-colors bg-blue-50 px-2 py-1 rounded text-xs"
+                             className="text-blue-600 hover:text-blue-900 transition-colors bg-blue-50 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest"
                              title="Edit"
                            >
                              EDIT
                            </button>
                            <button 
                              onClick={() => handleDelete(record.id!)} 
-                             className="text-red-600 hover:text-red-900 transition-colors bg-red-50 px-2 py-1 rounded text-xs"
+                             className="text-red-500 hover:text-red-700 transition-colors bg-red-50 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest"
                              title="Hapus"
                            >
                              HAPUS
@@ -438,5 +443,6 @@ export default function IndividualAttendance({ students, attendance, classes, on
         </div>
       )}
     </div>
+
   );
 }

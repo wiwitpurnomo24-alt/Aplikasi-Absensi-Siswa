@@ -40,6 +40,7 @@ import { signOut } from 'firebase/auth';
 import { useAuthStore } from '../lib/auth-store';
 import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, limit, getDocs } from 'firebase/firestore';
 import { SchoolData, UserRole } from '../types';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function Layout() {
   const location = useLocation();
@@ -80,10 +81,11 @@ export default function Layout() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'schoolData'), limit(1));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // Listener for school identity doc - listen to collection and prefer 'identity' doc
+    const unsubscribe = onSnapshot(getTenantCollection('schoolData'), (snapshot) => {
       if (!snapshot.empty) {
-        setSchoolData(snapshot.docs[0].data() as SchoolData);
+        const identityDoc = snapshot.docs.find(d => d.id === 'identity');
+        setSchoolData((identityDoc || snapshot.docs[0]).data() as SchoolData);
       }
     }, (error) => {
       console.error('Error fetching school data:', error);
@@ -110,7 +112,7 @@ export default function Layout() {
     let q: any;
     if (user.role === 'ADMIN') {
         q = query(
-          collection(db, 'notifications'),
+          getTenantCollection('notifications'),
           where('targetRole', '==', 'ADMIN'),
           where('read', '==', false),
           orderBy('createdAt', 'desc')
@@ -119,7 +121,7 @@ export default function Layout() {
         // Find student ID first if not in user profile
         if (user.uid) {
             q = query(
-              collection(db, 'notifications'),
+              getTenantCollection('notifications'),
               where('studentId', '==', user.uid), // In Login.tsx we set uid to studentDoc.id
               where('read', '==', false),
               orderBy('createdAt', 'desc')
@@ -128,7 +130,7 @@ export default function Layout() {
     } else if (user.role === 'SUBJECT_TEACHER') {
         if (user.uid) {
             q = query(
-              collection(db, 'notifications'),
+              getTenantCollection('notifications'),
               where('targetRole', '==', 'SUBJECT_TEACHER'),
               where('teacherId', '==', user.uid),
               where('read', '==', false),
@@ -139,7 +141,7 @@ export default function Layout() {
         // Default for TEACHER (Wali Kelas)
         if (user.className) {
             q = query(
-              collection(db, 'notifications'),
+              getTenantCollection('notifications'),
               where('className', '==', user.className),
               where('read', '==', false),
               orderBy('createdAt', 'desc')
@@ -194,7 +196,7 @@ export default function Layout() {
 
   const markAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'notifications', id), { read: true });
+      await updateDoc(getTenantDoc('notifications', id), { read: true });
     } catch (err) {
       console.error(err);
     }
@@ -241,38 +243,52 @@ export default function Layout() {
       icon: Database,
       role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'],
       subItems: [
-        { name: 'DATA SEKOLAH', path: '/admin?tab=school', icon: Building2, role: ['ADMIN', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
+        { name: 'DATA SEKOLAH', path: '/admin?tab=school', icon: Building2, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
+        { name: 'TAHUN AKADEMIK', path: '/admin?tab=academic-years', icon: Calendar, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
         { name: 'DATA GURU', path: '/admin?tab=teachers-list', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
         { name: 'DATA SISWA', path: '/admin?tab=students', icon: GraduationCap, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
-        { name: 'KELOLA PERAN GURU & PETUGAS', path: '/admin?tab=role-management-guru', icon: Users, role: ['ADMIN', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
+        { name: 'MANAJEMEN PERAN GURU', path: '/admin?tab=role-management-guru', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
+        { name: 'PETUGAS KELAS', path: '/admin?tab=role-management-petugas', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-500 hover:text-blue-400" },
         { name: 'WALI KELAS', path: '/admin?tab=teachers', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'GURU BK', path: '/admin?tab=counselors', icon: Search, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'DATA GURU MAPEL', path: '/admin?tab=subject-teachers', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'DATA KELAS', path: '/admin?tab=classes', icon: FilePlus, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
       ]
     },
-    { name: 'KEHADIRAN SISWA', path: '/school-presence', icon: UserCheck, role: ['ADMIN', 'TEACHER', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-slate-900 font-bold" },
+    { name: 'KEHADIRAN / KEPULANGAN SISWA', path: '/school-presence', icon: UserCheck, role: ['ADMIN', 'TEACHER', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-slate-900 font-bold" },
     {
       name: 'DATA ABSENSI',
       icon: ClipboardList,
       role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH', 'TEACHER'],
       subItems: [
         { name: 'DATA ABSENSI', path: '/teacher?tab=attendance', icon: CheckCircle2, role: ['TEACHER'] },
-        { name: 'RINGKASAN KEHADIRAN', path: '/admin?tab=attendance-summary', icon: LayoutGrid, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
-        { name: 'RINGKASAN KEHADIRAN', path: '/teacher?tab=attendance-summary', icon: LayoutGrid, role: ['TEACHER'] },
-        { name: 'REKAP MINGGUAN', path: '/admin?tab=weekly-recap', icon: Calendar, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-600 font-bold" },
-        { name: 'REKAP MINGGUAN', path: '/teacher?tab=weekly-recap', icon: Calendar, role: ['TEACHER'], className: "text-blue-600 font-bold" },
+        { name: 'ABSENSI HARIAN', path: '/admin?tab=attendance-summary', icon: LayoutGrid, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
+        { name: 'ABSENSI HARIAN', path: '/teacher?tab=attendance-summary', icon: LayoutGrid, role: ['TEACHER'] },
         { name: 'DETAIL KETIDAKHADIRAN', path: '/admin?tab=attendance-detail', icon: ClipboardList, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'DETAIL KETIDAKHADIRAN', path: '/teacher?tab=attendance-detail', icon: ClipboardList, role: ['TEACHER'] },
+        { name: 'REKAP MINGGUAN', path: '/admin?tab=weekly-recap', icon: Calendar, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-blue-600 font-bold" },
+        { name: 'REKAP MINGGUAN', path: '/teacher?tab=weekly-recap', icon: Calendar, role: ['TEACHER'], className: "text-blue-600 font-bold" },
         { name: 'REKAP ABSENSI PERBULAN', path: '/admin?tab=rekap', icon: FileText, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'REKAP ABSENSI PERBULAN', path: '/teacher?tab=rekap', icon: FileText, role: ['TEACHER'] },
         { name: 'REKAP ABSENSI SEMESTER', path: '/admin?tab=rekapSemester', icon: FileText, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'REKAP ABSENSI SEMESTER', path: '/teacher?tab=rekapSemester', icon: FileText, role: ['TEACHER'] },
         { name: 'ABSENSI INDIVIDUAL', path: '/admin?tab=attendance-individual', icon: UserCircle, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'ABSENSI INDIVIDUAL', path: '/teacher?tab=attendance-individual', icon: UserCircle, role: ['TEACHER'] },
-        { name: 'LAPORAN GURU MAPEL', path: '/admin?tab=subject-attendance-report', icon: UserCheck, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], className: "text-slate-900 font-bold" },
-        { name: 'LAPORAN GURU MAPEL', path: '/teacher?tab=subject-attendance-report', icon: UserCheck, role: ['TEACHER'], className: "text-slate-900 font-bold" },
       ]
+    },
+    { 
+      name: 'LAPORAN GURU MAPEL', 
+      path: '/admin?tab=subject-attendance-report', 
+      icon: UserCheck, 
+      role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'], 
+      className: "text-slate-900 font-bold" 
+    },
+    { 
+      name: 'LAPORAN GURU MAPEL', 
+      path: '/teacher?tab=subject-attendance-report', 
+      icon: UserCheck, 
+      role: ['TEACHER'], 
+      className: "text-slate-900 font-bold" 
     },
     { 
       name: 'ABSENSI MANUAL', 
@@ -284,14 +300,14 @@ export default function Layout() {
     {
       name: 'PETUGAS ABSENSI KELAS',
       icon: Users,
-      role: ['ADMIN', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'],
+      role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'],
       subItems: [
         { name: 'DAFTAR PETUGAS', path: '/attendance-officer?tab=officers', icon: Users, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'ABSENSI MANUAL', path: '/attendance-officer?tab=history', icon: ClipboardList, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
         { name: 'REKAP ABSENSI', path: '/attendance-officer?tab=rekap', icon: FileText, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
       ]
     },
-    { name: 'PENGATURAN', path: '/admin?tab=settings', icon: Settings, role: ['ADMIN', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
+    { name: 'PENGATURAN', path: '/admin?tab=settings', icon: Settings, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
   ];
 
   const filteredNavItems = navItems.filter(item => item.role.includes(user?.role || ''));
@@ -320,7 +336,7 @@ export default function Layout() {
             )}
             <div className="overflow-hidden">
               <h1 className="text-sm font-black leading-tight truncate">{schoolData?.sekolah || 'SMPN 2 MAGELANG'}</h1>
-              <p className="text-[7px] text-blue-500 uppercase tracking-tight font-black opacity-90 whitespace-nowrap overflow-hidden text-ellipsis">SISTEM INFORMASI ADMINISTRASI PRESENSI</p>
+              <p className="text-[7px] text-blue-500 uppercase tracking-tight font-black opacity-90 whitespace-nowrap overflow-hidden text-ellipsis">SISTEM INFORMASI ADMINISTRASI GIAT ABSENSI</p>
             </div>
           </div>
         </div>
@@ -343,8 +359,7 @@ export default function Layout() {
           <p className="px-4 py-2 text-[10px] font-black text-yellow-400 uppercase tracking-widest drop-shadow-sm">Menu Utama</p>
           {filteredNavItems.map((item) => {
             const isActive = item.path && (location.pathname + location.search === item.path || 
-                           (location.pathname === item.path && item.path.indexOf('?') === -1) ||
-                           (item.path.includes('role-management') && location.search.includes('role-management')));
+                           (location.pathname === item.path && item.path.indexOf('?') === -1));
 
             if (item.subItems) {
                const isOpen = openMenus[item.name] || false;
@@ -525,12 +540,11 @@ export default function Layout() {
           <div className="flex items-center gap-4">
               <ActiveAcademicYearDisplay />
               
-              {(user?.role === 'TEACHER' || user?.role === 'ADMIN') && (
-               <div className="relative flex items-center gap-2">
-                 <button 
-                  onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
-                  className="relative cursor-pointer hover:bg-sky-500 p-1.5 rounded-full transition-colors group outline-none"
-                 >
+              <div className="relative flex items-center gap-2">
+                <button 
+                 onClick={() => setShowNotificationsDropdown(!showNotificationsDropdown)}
+                 className="relative cursor-pointer hover:bg-sky-500 p-1.5 rounded-full transition-colors group outline-none"
+                >
                    <BellRing size={16} className={cn("text-sky-100 group-hover:text-white", notifications.length > 0 && "text-white")} />
                    {notifications.length > 0 && (
                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold flex items-center justify-center rounded-full border border-sky-600">
@@ -596,7 +610,6 @@ export default function Layout() {
                    )}
                  </AnimatePresence>
                </div>
-             )}
              <div className="hidden sm:flex flex-col items-end">
                 {user?.roles && user.roles.length > 1 && (
                   <button 

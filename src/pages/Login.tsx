@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { School, UserCircle, LogIn, ShieldCheck, ArrowRight, Eye, EyeOff, Scan, X, Camera, CheckCircle2, BarChart3, Clock, Bell } from 'lucide-react';
+import { School, UserCircle, LogIn, ShieldCheck, ArrowRight, Eye, EyeOff, Scan, X, Camera, CheckCircle2, BarChart3, Clock, Bell, Book } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -10,10 +10,12 @@ import { cn } from '../lib/utils';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { ROLE_LABELS } from '../constants';
 import { UserRole } from '../types';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function Login() {
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
+  const [schoolCode, setSchoolCode] = useState('demo1');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -96,30 +98,67 @@ export default function Login() {
       const result = await signInWithPopup(auth, provider);
       
       // Specifically for Admin Google Login
-      if (result.user.email === 'wiwitpurnomo24@guru.smp.belajar.id') {
-          try {
-            const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
-            await setDoc(doc(db, 'users', result.user.uid), {
-              name: result.user.displayName || 'Administrator',
-              email: result.user.email,
-              role: 'ADMIN',
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-          } catch (e) {
-            console.error("Failed to sync admin user profile:", e);
-          }
-
-          login({ 
-            uid: result.user.uid, 
-            role: 'ADMIN',
-            roles: ['ADMIN'],
-            name: result.user.displayName || 'Administrator',
-            email: result.user.email 
-          });
-          navigate('/admin');
-      } else {
-          setError('Email ini tidak terdaftar sebagai Administrator.');
+      try {
+        const { getDocs, query, collection, where } = await import('firebase/firestore');
+        const q = query(collection(db, 'schools'), where('adminEmail', '==', result.user.email));
+        const snap = await getDocs(q);
+        
+        if (!snap.empty) {
+           const school = snap.docs[0];
+           const schoolId = school.id;
+           
+           try {
+             const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+             await setDoc(getTenantDoc('users', result.user.uid), {
+               name: result.user.displayName || 'Administrator',
+               email: result.user.email,
+               role: 'ADMIN',
+               updatedAt: serverTimestamp()
+             }, { merge: true });
+           } catch (e) {
+             console.error("Failed to sync admin user profile:", e);
+           }
+           
+           login({ 
+             uid: result.user.uid, 
+             role: 'ADMIN',
+             roles: ['ADMIN'],
+             schoolId: schoolId,
+             name: result.user.displayName || 'Administrator',
+             email: result.user.email 
+           });
+           navigate('/admin');
+        } else if (result.user.email === 'wiwitpurnomo24@guru.smp.belajar.id') {
+           // Fallback for Super Admin
+           try {
+             const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+             await setDoc(getTenantDoc('users', result.user.uid), {
+               name: result.user.displayName || 'Administrator',
+               email: result.user.email,
+               role: 'ADMIN',
+               updatedAt: serverTimestamp()
+             }, { merge: true });
+           } catch (e) {
+             console.error("Failed to sync admin user profile:", e);
+           }
+           
+           login({ 
+             uid: result.user.uid, 
+             role: 'ADMIN',
+             roles: ['ADMIN'],
+             schoolId: schoolCode,
+             name: result.user.displayName || 'Administrator',
+             email: result.user.email 
+           });
+           navigate('/admin');
+        } else {
+            setError('Email ini tidak terdaftar sebagai Administrator sekolah.');
+        }
+      } catch (err: any) {
+        console.error("Auth error:", err);
+        setError('Gagal memproses login admin: ' + err.message);
       }
+
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/network-request-failed') {
@@ -150,6 +189,7 @@ export default function Login() {
       uid: 'demo-user-' + Date.now(),
       role, 
       roles: [role],
+      schoolId: schoolCode,
       name, 
       nis: role === 'PARENT' ? loginId : undefined, 
       nip: (role === 'TEACHER' || role === 'COUNSELOR' || role === 'SUBJECT_TEACHER') ? loginId : undefined, 
@@ -170,155 +210,115 @@ export default function Login() {
     const normalizedPassword = password.trim();
 
     try {
-        // 1. Check if Teacher/Staff
-        const teacherQ = query(collection(db, 'teachers'), where('nip', '==', normalizedId)); // Assuming username is NIP
-        const teacherSnap = await getDocs(teacherQ);
-
-        if (!teacherSnap.empty) {
-            const teacherDoc = teacherSnap.docs[0];
-            const teacherData = teacherDoc.data();
-            // Try 'password' first, then 'SANDI'
-            const passwordField = teacherData.password || teacherData['SANDI'] || '12345';
-            
-            if (passwordField === normalizedPassword) {
-                // Determine roles based on document fields
-                const roles: UserRole[] = [];
-                if (teacherData.isWali) roles.push('TEACHER');
-                if (teacherData.isSubjectTeacher) roles.push('SUBJECT_TEACHER');
-                if (teacherData.isCounselor) roles.push('COUNSELOR');
-                if (teacherData.isKepalaSekolah || teacherData.isWakilKepala) roles.push('ADMIN');
-
-                // If no roles, set default
-                if (roles.length === 0) {
-                   if (Array.isArray(teacherData.status)) {
-                      if (teacherData.status.includes('Wali Kelas')) roles.push('TEACHER');
-                      if (teacherData.status.includes('Guru Mapel')) roles.push('SUBJECT_TEACHER');
-                      if (teacherData.status.includes('Guru BK')) roles.push('COUNSELOR');
-                   }
-                }
-                
-                if (roles.length === 0) roles.push('TEACHER');
-
-                const uid = teacherDoc.id; // Use teacher document ID as UID for consistency
-
-                login({
-                    uid: uid,
-                    role: roles[0],
-                    roles: roles,
-                    nip: normalizedId,
-                    name: teacherData.name,
-                    className: teacherData.className,
-                    subject: teacherData.subject
-                });
-                
-                // Redirect
-                const role = roles[0];
-                navigate(role === 'ADMIN' ? '/admin' : role === 'TEACHER' ? '/teacher' : role === 'SUBJECT_TEACHER' ? '/subject-teacher' : '/admin');
-                return;
-            } else {
-                setError('Username atau Password salah.');
-                setLoading(false);
-                return;
-            }
-        }
-        
-        // 2. Check if Parent/Student (NIS)
-        const studentQ = query(collection(db, 'students'), where('nis', '==', normalizedId));
-        const studentSnap = await getDocs(studentQ);
-        
-        if (!studentSnap.empty) {
-            const studentDoc = studentSnap.docs[0];
-            const studentData = studentDoc.data();
-            // Try 'parentPassword' first, then 'SANDI ORTU'
-            const passwordField = studentData.parentPassword || studentData['SANDI ORTU'] || '12345';
-            
-            if (passwordField === normalizedPassword) {
-                 const roles: UserRole[] = ['PARENT'];
-                 let activeRole: UserRole = 'PARENT';
-                 
-                 if (studentData.role === 'PETUGAS_ABSEN_KELAS') {
-                   roles.push('PETUGAS_ABSEN_KELAS');
-                   activeRole = 'PETUGAS_ABSEN_KELAS';
-                 }
-
-                 login({
-                     uid: studentDoc.id,
-                     role: activeRole,
-                     roles: roles,
-                     nis: normalizedId,
-                     name: studentData.name,
-                     className: studentData.className
-                 });
-                 
-                 if (activeRole === 'PETUGAS_ABSEN_KELAS') {
-                   navigate('/attendance-officer');
-                 } else {
-                   navigate('/parent');
-                 }
-                 return;
-            } else {
-                setError('Username atau Password salah.');
-                setLoading(false);
-                return;
-            }
-        }
-
-        // 3. Check if Class Attendance Officer (Special Format: Class + AbsensiNo)
-        // We will fetch ALL students who have the role or have a clean ID match
-        const studentRef = collection(db, 'students');
-        const allStudentsSnap = await getDocs(studentRef);
-        
-        const foundOfficerDoc = allStudentsSnap.docs.find(doc => {
-            const data = doc.data();
-            const cleanClassName = (data.className || '').replace(/\s+/g, '').toUpperCase();
-            const paddedNo = String(data.absensiNo || '').padStart(2, '0');
-            const officerId = `${cleanClassName}${paddedNo}`;
-            
-            // Priority 1: Check new explicit userId field
-            if (data.userId && data.userId === normalizedId) return true;
-            
-            // Priority 2: Fallback to old format
-            return officerId.toLowerCase() === normalizedId.toLowerCase();
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: normalizedId, password: normalizedPassword, schoolId: schoolCode })
         });
 
-        if (foundOfficerDoc) {
-            const studentData = foundOfficerDoc.data();
-            // Important: Check if they are actually an officer
-            console.log("DEBUG: Officer found, UID:", foundOfficerDoc.id, "Data:", JSON.stringify(studentData));
-            if (studentData.role !== 'PETUGAS_ABSEN_KELAS') {
-                 console.log("DEBUG: Role mismatched. Expected: PETUGAS_ABSEN_KELAS, Found:", studentData.role);
-                 setError('Akun tidak memiliki akses Petugas Absensi Kelas.');
-                 setLoading(false);
-                 return;
-            }
+        const result = await response.json();
 
-            // For officers, the password is their new password, then parentPassword or NIS or 12345
-            const passwordField = studentData.password || studentData.parentPassword || studentData.nis || studentData['SANDI ORTU'] || '12345';
-            
-            if (passwordField === normalizedPassword) {
-                 const roles: UserRole[] = ['PARENT', 'PETUGAS_ABSEN_KELAS'];
-                 
-                 login({
-                     uid: foundOfficerDoc.id,
-                     role: 'PETUGAS_ABSEN_KELAS',
-                     roles: roles,
-                     nis: studentData.nis,
-                     name: studentData.name,
-                     className: studentData.className
-                 });
-                 
-                 navigate('/attendance-officer');
-                 return;
-            } else {
-                setError('Username atau Password salah.');
-                setLoading(false);
-                return;
-            }
+        if (!response.ok || !result.success) {
+          setError(result.error || 'Username atau Password salah.');
+          setLoading(false);
+          return;
         }
 
-        setError('Username tidak ditemukan.');
+        const { type, data } = result;
+
+        if (type === 'teacher') {
+            const teacherData = data;
+            const roles: UserRole[] = [];
+            if (teacherData.isWali) roles.push('TEACHER');
+            if (teacherData.isSubjectTeacher) roles.push('SUBJECT_TEACHER');
+            if (teacherData.isCounselor) roles.push('COUNSELOR');
+            if (teacherData.isKepalaSekolah || teacherData.isWakilKepala) roles.push('ADMIN');
+
+            if (roles.length === 0) {
+                if (Array.isArray(teacherData.status)) {
+                    if (teacherData.status.includes('Wali Kelas')) roles.push('TEACHER');
+                    if (teacherData.status.includes('Guru Mapel')) roles.push('SUBJECT_TEACHER');
+                    if (teacherData.status.includes('Guru BK')) roles.push('COUNSELOR');
+                }
+            }
+            if (roles.length === 0) roles.push('TEACHER');
+
+            // Sign in anonymously to Firebase
+            if (!auth.currentUser) {
+                try {
+                    const anonResult = await signInAnonymously(auth);
+                    await setDoc(getTenantDoc('users', anonResult.user.uid), {
+                        role: roles.includes('ADMIN') ? 'ADMIN' : (roles.includes('TEACHER') ? 'TEACHER' : (roles.includes('COUNSELOR') ? 'COUNSELOR' : (roles.includes('SUBJECT_TEACHER') ? 'SUBJECT_TEACHER' : 'GUEST'))),
+                        nip: normalizedId,
+                        name: teacherData.name,
+                        updatedAt: serverTimestamp()
+                    });
+                } catch (anonErr: any) {
+                    console.error("Anonymous authentication failed:", anonErr);
+                    if (anonErr.code === 'auth/admin-restricted-operation' || anonErr.code === 'auth/operation-not-allowed') {
+                        throw new Error('Firebase Anonymous Login is disabled. Silahkan aktifkan "Anonymous Auth" di Firebase Console (Authentication -> Sign-in methods).');
+                    }
+                }
+            }
+
+            login({
+                uid: teacherData.id,
+                role: roles[0],
+                roles: roles,
+                schoolId: schoolCode,
+                nip: normalizedId,
+                name: teacherData.name,
+                className: teacherData.className,
+                subject: teacherData.subject,
+                managedClasses: teacherData.managedClasses,
+                taughtClasses: teacherData.taughtClasses,
+                subjects: teacherData.subjects
+            });
+
+            const role = roles[0];
+            navigate(role === 'ADMIN' ? '/admin' : role === 'TEACHER' ? '/teacher' : role === 'SUBJECT_TEACHER' ? '/subject-teacher' : '/admin');
+        } 
+        else if (type === 'student' || type === 'officer') {
+            const studentData = data;
+            const roles: UserRole[] = ['PARENT'];
+            let activeRole: UserRole = 'PARENT';
+            
+            if (studentData.role === 'PETUGAS_ABSEN_KELAS' || type === 'officer') {
+              roles.push('PETUGAS_ABSEN_KELAS');
+              activeRole = 'PETUGAS_ABSEN_KELAS';
+            }
+
+            if (!auth.currentUser) {
+                try {
+                    const anonResult = await signInAnonymously(auth);
+                    await setDoc(getTenantDoc('users', anonResult.user.uid), {
+                        role: activeRole,
+                        nis: studentData.nis || normalizedId,
+                        name: studentData.name,
+                        updatedAt: serverTimestamp()
+                    });
+                } catch (anonErr: any) {
+                    console.error("Anonymous authentication failed:", anonErr);
+                    if (anonErr.code === 'auth/admin-restricted-operation' || anonErr.code === 'auth/operation-not-allowed') {
+                        throw new Error('Firebase Anonymous Login is disabled. Silahkan aktifkan "Anonymous Auth" di Firebase Console (Authentication -> Sign-in methods).');
+                    }
+                }
+            }
+
+            login({
+                uid: studentData.id,
+                role: activeRole,
+                roles: roles,
+                schoolId: schoolCode,
+                nis: studentData.nis || normalizedId,
+                name: studentData.name,
+                className: studentData.className
+            });
+            
+            navigate(activeRole === 'PETUGAS_ABSEN_KELAS' ? '/attendance-officer' : '/parent');
+        }
     } catch (err: any) {
-        handleFirestoreError(err, 'get', 'login');
+        console.error("Login client error:", err);
         setError('Terjadi kesalahan sistem: ' + err.message);
     } finally {
         setLoading(false);
@@ -335,13 +335,13 @@ export default function Login() {
               <School size={40} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">SIAP</h1>
-              <p className="text-blue-200 text-sm font-medium">Sistem Informasi Administrasi Presensi</p>
+              <h1 className="text-2xl font-bold tracking-tight">SIAGA</h1>
+              <p className="text-blue-200 text-sm font-medium">Sistem Informasi Administrasi Giat Absensi</p>
             </div>
           </div>
           
           <h2 className="text-4xl font-extrabold text-white leading-tight mb-10">
-            Digitalisasi Absensi <br/> <span className="text-blue-300">Sekolah Anda</span>
+            <span className="text-blue-300">Sistem Digitalisasi Absensi</span> <br/> <span className="text-blue-300">Sekolah</span>
           </h2>
           <ul className="space-y-6 text-blue-50 text-lg max-w-md">
             <li className="flex items-start gap-4">
@@ -358,13 +358,13 @@ export default function Login() {
             </li>
             <li className="flex items-start gap-4">
                 <Bell className="mt-1 text-blue-400 flex-shrink-0" size={20} />
-                <span>Notifikasi otomatis ke orang tua</span>
+                <span>Notifikasi otomatis ke orang tua lewat Whatsapp</span>
             </li>
           </ul>
         </div>
 
         <div className="relative z-10 text-blue-200/50 text-xs font-bold uppercase tracking-widest">
-            © 2026 SIAP | Sistem Informasi Administrasi Presensi
+            © 2026 SIAGA | Sistem Informasi Administrasi Giat Absensi
         </div>
 
         {/* Decorative elements */}
@@ -385,7 +385,7 @@ export default function Login() {
                   <School size={32} />
                </div>
             </div>
-            <h3 className="text-3xl font-extrabold text-[#343a40] tracking-tight mb-2">SIAP</h3>
+            <h3 className="text-3xl font-extrabold text-[#343a40] tracking-tight mb-2">SIAGA</h3>
             <p className="text-sm font-bold text-blue-600 uppercase tracking-widest">Akses Masuk Sistem</p>
             <div className="h-1 w-12 bg-blue-600 mx-auto mt-4 rounded-full"></div>
           </div>
@@ -395,6 +395,25 @@ export default function Login() {
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">
+                Kode Sekolah (NPSN)
+              </label>
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-600 transition-colors">
+                   <School size={20} />
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={schoolCode}
+                  onChange={(e) => setSchoolCode(e.target.value)}
+                  placeholder="Masukkan Kode Sekolah..."
+                  className="w-full pl-12 pr-4 py-3.5 bg-white border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-600 outline-none transition-all font-semibold text-gray-700 placeholder:font-normal"
+                />
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">
                 Username (NIP / NIS)
@@ -489,9 +508,19 @@ export default function Login() {
 
           </form>
 
-          <p className="text-center mt-12 text-sm text-gray-400">
-            Lupa data akses? Silakan hubungi <span className="text-blue-700 font-medium">Pusat Layanan SIAP</span>
+          <p className="text-center mt-8 text-sm text-gray-400">
+            Lupa data akses? Silakan hubungi <span className="text-blue-700 font-medium">Pusat Layanan SIAGA</span>
           </p>
+
+          <div className="mt-6 flex justify-center">
+            <button 
+              onClick={() => navigate('/panduan')}
+              className="flex items-center gap-2 px-6 py-3 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors rounded-xl font-bold text-sm"
+            >
+              <Book size={18} />
+              Panduan Penggunaan Aplikasi
+            </button>
+          </div>
         </motion.div>
       </div>
       {/* QR Scanner Modal */}

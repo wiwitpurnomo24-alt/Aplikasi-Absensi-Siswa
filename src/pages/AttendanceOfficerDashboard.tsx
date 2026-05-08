@@ -12,6 +12,7 @@ import { cn, formatDate } from '../lib/utils';
 import { useAuthStore } from '../lib/auth-store';
 import { generateQRCodeDataUrl } from '../services/pdfService';
 import { jsPDF } from 'jspdf';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function AttendanceOfficerDashboard() {
   const { user } = useAuthStore();
@@ -244,7 +245,7 @@ export default function AttendanceOfficerDashboard() {
   const handleRemoveOfficer = (id: string) => {
     showConfirm('Hapus peran petugas dari siswa ini?', async () => {
       try {
-        await updateDoc(doc(db, 'students', id), { role: null });
+        await updateDoc(getTenantDoc('students', id), { role: null });
         setStatusMessage('Petugas berhasil dihapus');
         setTimeout(() => setStatusMessage(''), 3000);
       } catch (err: any) {
@@ -261,21 +262,21 @@ export default function AttendanceOfficerDashboard() {
 
   useEffect(() => {
     if (!user || !authReady) return;
-    const q = query(collection(db, 'attendance'), orderBy('submittedAt', 'desc'));
+    const q = query(getTenantCollection('attendance'), orderBy('submittedAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setAttendance(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord)));
     }, (err) => {
       handleFirestoreError(err, 'list', 'Attendance Officer Fetch');
     });
     
-    const sQ = query(collection(db, 'students'));
+    const sQ = query(getTenantCollection('students'));
     const unsubscribeStudents = onSnapshot(sQ, (snapshot) => {
       setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
     }, (err) => {
       handleFirestoreError(err, 'list', 'Attendance Officer Fetch Students');
     });
 
-    const cQ = query(collection(db, 'classes'));
+    const cQ = query(getTenantCollection('classes'));
     const unsubscribeClasses = onSnapshot(cQ, (snapshot) => {
       setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
     }, (err) => {
@@ -291,7 +292,7 @@ export default function AttendanceOfficerDashboard() {
       const student = students.find(s => s.id === newAttendance.studentId);
       if (!student) return;
 
-      await addDoc(collection(db, 'attendance'), {
+      await addDoc(getTenantCollection('attendance'), {
         studentId: student.id,
         studentName: student.name,
         className: student.className,
@@ -305,14 +306,15 @@ export default function AttendanceOfficerDashboard() {
         parentPhone: '-',
         address: '-',
         source: 'App',
-        processedBy: user?.name || 'Petugas'
+        processedBy: user?.name || 'Petugas',
+        processedById: user?.uid || null
       });
 
       // Early Warning Check
       checkAttendanceAlert(student.id, student.name, student.className).catch(console.error);
 
       // Notify ADMIN
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(getTenantCollection('notifications'), {
         targetRole: 'ADMIN',
         title: 'Input Absensi Petugas',
         message: `${student.name} (${student.className}) ditambahkan absensi ${newAttendance.type} oleh ${user?.name || 'Petugas'}.`,
@@ -340,7 +342,7 @@ export default function AttendanceOfficerDashboard() {
   const handleDelete = (id: string) => {
     showConfirm('Apakah Anda yakin ingin menghapus data absensi ini?', async () => {
       try {
-        await deleteDoc(doc(db, 'attendance', id));
+        await deleteDoc(getTenantDoc('attendance', id));
       } catch (err) {
         handleFirestoreError(err, 'delete' as any, 'attendance');
       }
@@ -351,7 +353,7 @@ export default function AttendanceOfficerDashboard() {
     e.preventDefault();
     try {
       const { id, ...data } = formData;
-      await updateDoc(doc(db, 'attendance', id), data);
+      await updateDoc(getTenantDoc('attendance', id), data);
       setShowEditModal(false);
       setFormData({});
     } catch (err) {
@@ -363,7 +365,29 @@ export default function AttendanceOfficerDashboard() {
 
   return (
     <div className="p-8 space-y-8">
-      <h1 className="text-2xl font-black text-gray-900">Dashboard Petugas Absensi</h1>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-5">
+          <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-emerald-100">
+            <ClipboardList size={32} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none uppercase">Selamat Datang, {user?.name}</h1>
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-green-50 px-2.5 py-1 rounded-full border border-green-100">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">Online</span>
+                </div>
+                <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Petugas Absensi</p>
+              </div>
+              <p className="text-sm text-gray-500 font-medium">
+                Kelola data petugas kelas, input absensi harian, dan pantau riwayat presensi siswa.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
       
       {statusMessage && (
         <motion.div 
@@ -636,62 +660,66 @@ export default function AttendanceOfficerDashboard() {
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left min-w-[600px]">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Siswa</th>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Kelas</th>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Hari/Tanggal</th>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Jenis</th>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase">Petugas</th>
-                    <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase text-center">Aksi</th>
+              <table className="w-full text-left min-w-[800px] border border-gray-100 shadow-sm rounded-xl overflow-hidden">
+                <thead className="bg-gray-50/80">
+                  <tr className="border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500">
+                    <th className="px-6 py-4">Siswa</th>
+                    <th className="px-6 py-4">Kelas</th>
+                    <th className="px-6 py-4">Hari / Tanggal</th>
+                    <th className="px-6 py-4 text-center">Jenis</th>
+                    <th className="px-6 py-4">Petugas</th>
+                    <th className="px-6 py-4 text-center">Aksi</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
+                <tbody className="divide-y divide-gray-100/80 bg-white">
                   {paginatedHistory.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-6 py-12 text-center text-gray-400 italic text-sm">Belum ada riwayat absensi petugas.</td>
                     </tr>
                   ) : (
                     paginatedHistory.map((item, idx) => (
-                      <tr key={`attendance-${item.id}-${idx}`} className="hover:bg-blue-50/10 transition-colors">
+                      <tr key={`attendance-${item.id}-${idx}`} className="group hover:bg-gray-50/80 transition-all duration-200">
                         <td className="px-6 py-4">
-                            <p className="font-bold text-sm text-gray-900">{item.studentName}</p>
-                            <p className="text-[10px] text-gray-400 font-medium">#{item.studentId?.slice(-5)}</p>
+                            <p className="font-bold text-sm text-gray-900 group-hover:text-blue-600 transition-colors">{item.studentName}</p>
+                            <p className="text-[10px] text-gray-400 font-bold mt-0.5 tracking-wider">#{item.studentId?.slice(-5)}</p>
                         </td>
-                        <td className="px-6 py-4 text-sm font-black text-blue-600 uppercase">{item.className}</td>
+                        <td className="px-6 py-4">
+                             <span className="px-2.5 py-1 bg-gray-100/80 text-gray-700 rounded-lg text-xs font-bold uppercase tracking-wider border border-gray-200/50">
+                                  {item.className}
+                             </span>
+                        </td>
                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-gray-900">{item.day || '-'}</p>
-                            <p className="text-[10px] text-gray-400">{item.date ? formatDate(new Date(item.date)) : '-'}</p>
+                            <p className="text-xs font-bold text-gray-700">{item.day || '-'}</p>
+                            <p className="text-[10px] text-gray-500 font-black mt-0.5 tracking-wide">{item.date ? formatDate(new Date(item.date)) : '-'}</p>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 text-center">
                             <span className={cn(
-                              "px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase",
-                              item.type === 'Sakit' ? "bg-amber-100 text-amber-600" :
-                              item.type === 'Izin' ? "bg-blue-100 text-blue-600" :
-                              item.type === 'Dispensasi' ? "bg-purple-100 text-purple-600" : "bg-red-100 text-red-600"
+                              "px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ring-1 shadow-sm w-fit mx-auto block",
+                              item.type === 'Sakit' ? "bg-amber-50 text-amber-600 ring-amber-400/20" :
+                              item.type === 'Izin' ? "bg-blue-50 text-blue-600 ring-blue-400/20" :
+                              item.type === 'Dispensasi' ? "bg-purple-50 text-purple-600 ring-purple-400/20" : "bg-red-50 text-red-600 ring-red-400/20"
                             )}>
                               {item.type}
                             </span>
                         </td>
-                        <td className="px-6 py-4 text-xs font-medium text-gray-500">{item.processedBy || '-'}</td>
+                        <td className="px-6 py-4 text-xs font-bold text-gray-500">{item.processedBy || '-'}</td>
                         <td className="px-6 py-4 text-sm">
                           <div className="flex justify-center gap-2">
                             {isManagement && (
                               <>
                                 <button 
                                   onClick={() => { setFormData(item); setShowEditModal(true); }}
-                                  className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                                  className="p-2 text-blue-500 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-all"
                                   title="Edit"
                                 >
-                                  <Edit size={14} />
+                                  <Edit size={16} />
                                 </button>
                                 <button 
                                   onClick={() => handleDelete(item.id!)}
-                                  className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+                                  className="p-2 text-red-500 hover:bg-red-50 hover:text-red-600 rounded-lg transition-all"
                                   title="Hapus"
                                 >
-                                  <Trash2 size={14} />
+                                  <Trash2 size={16} />
                                 </button>
                               </>
                             )}

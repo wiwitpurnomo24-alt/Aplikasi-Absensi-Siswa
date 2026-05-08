@@ -1,10 +1,11 @@
 import { addDoc, collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { AttendanceRecord, AttendanceAlert } from '../types';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 const createAlert = async (studentId: string, studentName: string, className: string, type: 'consecutive' | 'total', details: string) => {
     // Prevent duplicate active alerts
-    const alertsRef = collection(db, 'attendance_alerts');
+    const alertsRef = getTenantCollection('attendance_alerts');
     const q = query(alertsRef, where('studentId', '==', studentId), where('status', '==', 'active'));
     const snapshot = await getDocs(q);
     
@@ -21,7 +22,7 @@ const createAlert = async (studentId: string, studentName: string, className: st
     });
 
     // Notify Wali Kelas via the Layout Bell system
-    await addDoc(collection(db, 'notifications'), {
+    await addDoc(getTenantCollection('notifications'), {
         className: className,
         studentName: studentName,
         studentId: studentId,
@@ -33,7 +34,7 @@ const createAlert = async (studentId: string, studentName: string, className: st
     });
 
     // Notify ADMIN via the Layout Bell system
-    await addDoc(collection(db, 'notifications'), {
+    await addDoc(getTenantCollection('notifications'), {
         targetRole: 'ADMIN',
         studentName: studentName,
         studentId: studentId,
@@ -49,7 +50,7 @@ const createAlert = async (studentId: string, studentName: string, className: st
 export const checkAttendanceAlert = async (studentId: string, studentName: string, className: string) => {
   // Fetch only approved attendance for this student
   const q = query(
-    collection(db, 'attendance'), 
+    getTenantCollection('attendance'), 
     where('studentId', '==', studentId),
     where('status', '==', 'Approved')
   );

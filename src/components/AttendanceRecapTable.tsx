@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { formatDate } from '../lib/utils';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 interface AttendanceRecapTableProps {
   students: Student[];
@@ -25,13 +26,13 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
   useEffect(() => {
     async function fetchData() {
       try {
-        const schoolQ = query(collection(db, 'schoolData'), limit(1));
+        const schoolQ = query(getTenantCollection('schoolData'), limit(1));
         const schoolSnap = await getDocs(schoolQ);
         if (!schoolSnap.empty) {
           setSchoolData(schoolSnap.docs[0].data() as SchoolData);
         }
 
-        const yearQ = query(collection(db, 'academicYears'), limit(1));
+        const yearQ = query(getTenantCollection('academicYears'), limit(1));
         const yearSnap = await getDocs(yearQ);
         if (!yearSnap.empty) {
           const activeYear = yearSnap.docs.find(d => d.data().active)?.data() as AcademicYear;
@@ -308,52 +309,52 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
         <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead>
             <tr>
-              <th rowSpan={2} className="p-3 border border-gray-200 text-xs font-bold text-gray-700 bg-gray-50 text-center w-12">No</th>
-              <th rowSpan={2} className="p-3 border border-gray-200 text-xs font-bold text-gray-700 bg-gray-50 w-24">NIS</th>
-              <th rowSpan={2} className="p-3 border border-gray-200 text-xs font-bold text-gray-700 bg-gray-50 min-w-[180px]">Nama Siswa</th>
-              <th rowSpan={2} className="p-3 border border-gray-200 text-xs font-bold text-gray-700 bg-gray-50 text-center w-16">L/P</th>
-              <th colSpan={daysInMonth} className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-blue-50 text-center">
+              <th rowSpan={2} className="p-3 border border-gray-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-gray-500 bg-gray-50/80 text-center w-12">No</th>
+              <th rowSpan={2} className="p-3 border border-gray-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-gray-500 bg-gray-50/80 w-24">NIS</th>
+              <th rowSpan={2} className="p-3 border border-gray-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-gray-500 bg-gray-50/80 min-w-[180px]">Nama Siswa</th>
+              <th rowSpan={2} className="p-3 border border-gray-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-gray-500 bg-gray-50/80 text-center w-16">L/P</th>
+              <th colSpan={daysInMonth} className="p-2 border border-blue-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-blue-700 bg-blue-50/80 text-center">
                 {currentMonths.find(m => m.value === selectedMonth)?.label}
               </th>
-              <th colSpan={4} className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-orange-50 text-center">Jumlah Absensi</th>
+              <th colSpan={4} className="p-2 border border-orange-100 text-[10px] sm:text-xs font-black uppercase tracking-widest text-orange-700 bg-orange-50/80 text-center">Jumlah Absensi</th>
             </tr>
             <tr>
               {daysArray.map(day => (
-                <th key={day} className="p-2 border border-gray-200 text-[10px] font-bold text-gray-600 bg-blue-50/50 text-center w-8">
+                <th key={day} className="p-2 border border-blue-100/50 text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50/40 text-center w-8">
                   {day}
                 </th>
               ))}
-              <th className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-orange-50/50 text-center w-10">S</th>
-              <th className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-orange-50/50 text-center w-10">I</th>
-              <th className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-orange-50/50 text-center w-10">A</th>
-              <th className="p-2 border border-gray-200 text-xs font-bold text-gray-700 bg-orange-50/50 text-center w-10">D</th>
+              <th className="p-2 border border-orange-100/50 text-[10px] font-black uppercase tracking-widest text-orange-700 bg-orange-50/40 text-center w-10">S</th>
+              <th className="p-2 border border-orange-100/50 text-[10px] font-black uppercase tracking-widest text-orange-700 bg-orange-50/40 text-center w-10">I</th>
+              <th className="p-2 border border-orange-100/50 text-[10px] font-black uppercase tracking-widest text-orange-700 bg-orange-50/40 text-center w-10">A</th>
+              <th className="p-2 border border-orange-100/50 text-[10px] font-black uppercase tracking-widest text-orange-700 bg-orange-50/40 text-center w-10">D</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-gray-100/80 bg-white">
             {currentData.length > 0 ? (
               currentData.map((student, index) => (
-                <tr key={student.id ? `${student.id}-${index}` : `stud-${index}`} className="hover:bg-gray-50">
-                  <td className="p-2 border border-gray-200 text-xs text-center">{(currentPage - 1) * itemsPerPage + index + 1}</td>
-                  <td className="p-2 border border-gray-200 text-xs">{student.nis}</td>
-                  <td className="p-2 border border-gray-200 text-xs font-medium text-gray-900">{student.name}</td>
-                  <td className="p-2 border border-gray-200 text-xs text-center">{student.gender}</td>
+                <tr key={student.id ? `${student.id}-${index}` : `stud-${index}`} className="group hover:bg-gray-50/80 transition-all duration-200">
+                  <td className="p-2 border-r border-gray-100 text-xs text-center text-gray-500 font-bold">{(currentPage - 1) * itemsPerPage + index + 1}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-gray-600 font-bold">{student.nis}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{student.name}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-bold text-gray-600">{student.gender}</td>
                   {daysArray.map(day => {
                     const code = student.dayMap[day];
                     return (
-                      <td key={`${student.id || student.nis || index}-day-${day}`} className={`p-1 border border-gray-200 text-[10px] text-center font-bold
-                        ${code === 'S' ? 'bg-orange-100 text-orange-700' : ''}
-                        ${code === 'I' ? 'bg-yellow-100 text-yellow-700' : ''}
-                        ${code === 'A' ? 'bg-red-100 text-red-700' : ''}
-                        ${code === 'D' ? 'bg-purple-100 text-purple-700' : ''}
+                      <td key={`${student.id || student.nis || index}-day-${day}`} className={`p-1 border-r border-gray-50 text-[10px] text-center font-black
+                        ${code === 'S' ? 'bg-orange-50 text-orange-600' : ''}
+                        ${code === 'I' ? 'bg-yellow-50 text-yellow-600' : ''}
+                        ${code === 'A' ? 'bg-red-50 text-red-600' : ''}
+                        ${code === 'D' ? 'bg-purple-50 text-purple-600' : ''}
                       `}>
                         {code || '-'}
                       </td>
                     );
                   })}
-                  <td className="p-2 border border-gray-200 text-xs text-center font-bold text-orange-600">{student.totals.s}</td>
-                  <td className="p-2 border border-gray-200 text-xs text-center font-bold text-yellow-600">{student.totals.i}</td>
-                  <td className="p-2 border border-gray-200 text-xs text-center font-bold text-red-600">{student.totals.a}</td>
-                  <td className="p-2 border border-gray-200 text-xs text-center font-bold text-purple-600">{student.totals.d}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-orange-600 bg-orange-50/20">{student.totals.s}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-yellow-600 bg-yellow-50/20">{student.totals.i}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-red-600 bg-red-50/20">{student.totals.a}</td>
+                  <td className="p-2 text-xs text-center font-black text-purple-600 bg-purple-50/20">{student.totals.d}</td>
                 </tr>
               ))
             ) : (

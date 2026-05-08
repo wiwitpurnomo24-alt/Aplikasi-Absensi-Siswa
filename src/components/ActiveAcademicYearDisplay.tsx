@@ -3,6 +3,7 @@ import { db, handleFirestoreError } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Calendar } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function ActiveAcademicYearDisplay() {
   const { user } = useAuthStore();
@@ -10,7 +11,7 @@ export default function ActiveAcademicYearDisplay() {
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'academicYears'), where('active', '==', true));
+    const q = query(getTenantCollection('academicYears'), where('active', '==', true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         setActiveYear(snapshot.docs[0].data());
@@ -26,9 +27,9 @@ export default function ActiveAcademicYearDisplay() {
   if (!activeYear) return null;
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1 bg-white/15 text-white border border-white/20 rounded-full shadow-sm">
-      <Calendar size={12} className="text-white" />
-      <span className="text-[10px] font-extrabold whitespace-nowrap">
+    <div className="flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-700 border border-indigo-100 rounded-xl shadow-sm">
+      <Calendar size={14} className="text-indigo-400" />
+      <span className="text-[10px] font-black whitespace-nowrap uppercase tracking-widest">
         TA: {activeYear.year}
       </span>
     </div>

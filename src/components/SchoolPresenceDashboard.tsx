@@ -11,8 +11,11 @@ import { AttendanceConfig } from './AttendanceConfig';
 import { QRCameraScanner } from './QRCameraScanner';
 import PresenceMonthlyReport from './PresenceMonthlyReport';
 import PresenceSemesterReport from './PresenceSemesterReport';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
+import { useAuthStore } from '../lib/auth-store';
 
 export const SchoolPresenceDashboard: React.FC = () => {
+    const { user } = useAuthStore();
     const [presence, setPresence] = useState<any[]>([]);
     const [students, setStudents] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<'main' | 'monthly' | 'semester'>('main');
@@ -36,7 +39,7 @@ export const SchoolPresenceDashboard: React.FC = () => {
     }, [presence, selectedStudent]);
 
     useEffect(() => {
-        const qPresence = query(collection(db, 'schoolPresence'), orderBy('timestamp', 'desc'));
+        const qPresence = query(getTenantCollection('schoolPresence'), orderBy('timestamp', 'desc'));
         const unsubscribePresence = onSnapshot(qPresence, (snapshot) => {
             setPresence(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             setLoading(false);
@@ -45,7 +48,7 @@ export const SchoolPresenceDashboard: React.FC = () => {
             setLoading(false);
         });
 
-        const qStudents = query(collection(db, 'students'));
+        const qStudents = query(getTenantCollection('students'));
         const unsubscribeStudents = onSnapshot(qStudents, (snapshot) => {
             setStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
@@ -241,15 +244,17 @@ export const SchoolPresenceDashboard: React.FC = () => {
                     className: editMode.className,
                     type: 'arrival',
                     timestamp: Timestamp.fromDate(arrDate),
-                    status: editForm.arrivalStatus || 'Hadir'
+                    status: editForm.arrivalStatus || 'Hadir',
+                    processedBy: user?.name || 'Admin',
+                    processedById: user?.uid || null
                 };
                 if (editMode.arrivalId) {
-                    await updateDoc(doc(db, 'schoolPresence', editMode.arrivalId), arrData);
+                    await updateDoc(getTenantDoc('schoolPresence', editMode.arrivalId), arrData);
                 } else {
-                    await addDoc(collection(db, 'schoolPresence'), arrData);
+                    await addDoc(getTenantCollection('schoolPresence'), arrData);
                 }
             } else if (editMode.arrivalId) {
-                await deleteDoc(doc(db, 'schoolPresence', editMode.arrivalId));
+                await deleteDoc(getTenantDoc('schoolPresence', editMode.arrivalId));
             }
 
             // Handle Departure
@@ -261,15 +266,17 @@ export const SchoolPresenceDashboard: React.FC = () => {
                     className: editMode.className,
                     type: 'departure',
                     timestamp: Timestamp.fromDate(depDate),
-                    status: editForm.departureStatus || 'Valid'
+                    status: editForm.departureStatus || 'Valid',
+                    processedBy: user?.name || 'Admin',
+                    processedById: user?.uid || null
                 };
                 if (editMode.departureId) {
-                    await updateDoc(doc(db, 'schoolPresence', editMode.departureId), depData);
+                    await updateDoc(getTenantDoc('schoolPresence', editMode.departureId), depData);
                 } else {
-                    await addDoc(collection(db, 'schoolPresence'), depData);
+                    await addDoc(getTenantCollection('schoolPresence'), depData);
                 }
             } else if (editMode.departureId) {
-                await deleteDoc(doc(db, 'schoolPresence', editMode.departureId));
+                await deleteDoc(getTenantDoc('schoolPresence', editMode.departureId));
             }
             
             setEditMode(null);
@@ -281,8 +288,8 @@ export const SchoolPresenceDashboard: React.FC = () => {
     const handleDelete = async (item: any) => {
         if (window.confirm(`Hapus data kehadiran ${item.studentName} pada ${item.dateStr}?`)) {
             try {
-                if (item.arrivalId) await deleteDoc(doc(db, 'schoolPresence', item.arrivalId));
-                if (item.departureId) await deleteDoc(doc(db, 'schoolPresence', item.departureId));
+                if (item.arrivalId) await deleteDoc(getTenantDoc('schoolPresence', item.arrivalId));
+                if (item.departureId) await deleteDoc(getTenantDoc('schoolPresence', item.departureId));
             } catch (e) {
                 handleFirestoreError(e, 'delete', 'schoolPresence');
             }
@@ -297,8 +304,8 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 for (const id of selectedIds) {
                     const item = filteredData.find(d => d.id === id);
                     if (item) {
-                        if (item.arrivalId) deletePromises.push(deleteDoc(doc(db, 'schoolPresence', item.arrivalId)));
-                        if (item.departureId) deletePromises.push(deleteDoc(doc(db, 'schoolPresence', item.departureId)));
+                        if (item.arrivalId) deletePromises.push(deleteDoc(getTenantDoc('schoolPresence', item.arrivalId)));
+                        if (item.departureId) deletePromises.push(deleteDoc(getTenantDoc('schoolPresence', item.departureId)));
                     }
                 }
                 await Promise.all(deletePromises);
@@ -388,7 +395,13 @@ export const SchoolPresenceDashboard: React.FC = () => {
             const res = await fetch('/api/webhook/attendance-scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ studentId, type: new Date().getHours() < 11 ? 'arrival' : 'departure' })
+                body: JSON.stringify({ 
+                    studentId, 
+                    type: new Date().getHours() < 11 ? 'arrival' : 'departure', 
+                    schoolId: user?.schoolId || 'default',
+                    processedBy: user?.name || 'Scanner',
+                    processedById: user?.uid || null
+                })
             });
             const data = await res.json();
             
@@ -505,8 +518,8 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 <button 
                     onClick={() => setActiveTab('main')}
                     className={cn(
-                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                        activeTab === 'main' ? "bg-blue-600 text-white shadow-md shadow-blue-100" : "text-gray-400 hover:text-gray-600"
+                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all border-2",
+                        activeTab === 'main' ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-100" : "border-blue-600 text-blue-600 hover:bg-blue-50"
                     )}
                 >
                     Monitoring Harian
@@ -514,8 +527,8 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 <button 
                     onClick={() => setActiveTab('monthly')}
                     className={cn(
-                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                        activeTab === 'monthly' ? "bg-green-600 text-white shadow-md shadow-green-100" : "text-gray-400 hover:text-gray-600"
+                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all border-2",
+                        activeTab === 'monthly' ? "bg-green-600 border-green-600 text-white shadow-md shadow-green-100" : "border-green-600 text-green-600 hover:bg-green-50"
                     )}
                 >
                     Laporan Bulanan
@@ -523,8 +536,8 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 <button 
                     onClick={() => setActiveTab('semester')}
                     className={cn(
-                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                        activeTab === 'semester' ? "bg-purple-600 text-white shadow-md shadow-purple-100" : "text-gray-400 hover:text-gray-600"
+                        "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all border-2",
+                        activeTab === 'semester' ? "bg-purple-600 border-purple-600 text-white shadow-md shadow-purple-100" : "border-purple-600 text-purple-600 hover:bg-purple-50"
                     )}
                 >
                     Laporan Semester
@@ -601,13 +614,13 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 </div>
 
                 <div ref={tableScrollRef} onScroll={handleTableScroll} className="overflow-x-auto custom-scrollbar">
-                    <table className="w-full text-left bg-white rounded-lg overflow-hidden min-w-[1000px]">
+                    <table className="w-full text-left bg-white rounded-2xl overflow-hidden min-w-[1000px] border border-gray-100 shadow-sm">
                         <thead>
-                            <tr className="border-b uppercase text-xs text-gray-500 bg-gray-50">
-                            <th className="p-3 text-center w-10">
+                            <tr className="border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500 bg-gray-50/80">
+                            <th className="px-4 py-4 text-center w-12">
                                 <input 
                                     type="checkbox" 
-                                    className="cursor-pointer w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    className="cursor-pointer w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 transition-all"
                                     checked={paginatedData.length > 0 && paginatedData.every(p => selectedIds.includes(p.id))}
                                     onChange={(e) => {
                                         if (e.target.checked) {
@@ -620,24 +633,29 @@ export const SchoolPresenceDashboard: React.FC = () => {
                                     }}
                                 />
                             </th>
-                            <th className="p-3 text-center w-12">Nomor</th>
-                            <th className="p-3 cursor-pointer hover:text-indigo-600 font-bold" onClick={() => requestSort('studentName')}>NAMA SISWA</th>
-                            <th className="p-3 font-bold">KELAS</th>
-                            <th className="p-3 cursor-pointer hover:text-indigo-600 font-bold" onClick={() => requestSort('timestamp')}>WAKTU</th>
-                            <th className="p-3 text-center text-green-700 font-bold">JAM KEHADIRAN</th>
-                            <th className="p-3 text-center text-green-700 font-bold">STATUS KEHADIRAN</th>
-                            <th className="p-3 text-center text-blue-700 font-bold">KEPULANGAN</th>
-                            <th className="p-3 text-center text-blue-700 font-bold">STATUS KEPULANGAN</th>
-                            <th className="p-3 text-center font-bold">AKSI</th>
+                            <th className="px-4 py-4 text-center">NO</th>
+                            <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => requestSort('studentName')}>
+                                <div className="flex items-center gap-2">NAMA SISWA</div>
+                            </th>
+                            <th className="px-6 py-4">KELAS</th>
+                            <th className="px-6 py-4 cursor-pointer hover:text-indigo-600 transition-colors" onClick={() => requestSort('timestamp')}>WAKTU</th>
+                            <th className="px-6 py-4 text-center text-emerald-700">JAM KEHADIRAN</th>
+                            <th className="px-6 py-4 text-center text-emerald-700">STATUS KEHADIRAN</th>
+                            <th className="px-6 py-4 text-center text-blue-700">KEPULANGAN</th>
+                            <th className="px-6 py-4 text-center text-blue-700">STATUS KEPULANGAN</th>
+                            <th className="px-6 py-4 text-center">AKSI</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-gray-100/80">
                         {paginatedData.map((p, idx) => (
-                            <tr key={`table-presence-${p.id}-${idx}`} className="border-b text-xs hover:bg-gray-50 transition-colors">
-                                <td className="p-3 text-center">
+                            <tr key={`table-presence-${p.id}-${idx}`} className={cn(
+                                "group text-sm transition-all duration-200", 
+                                selectedIds.includes(p.id) ? "bg-indigo-50/50" : "hover:bg-gray-50/80 bg-white"
+                            )}>
+                                <td className="px-4 py-4 text-center">
                                     <input 
                                         type="checkbox" 
-                                        className="cursor-pointer w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                        className="cursor-pointer w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 transition-all"
                                         checked={selectedIds.includes(p.id)}
                                         onChange={(e) => {
                                             if (e.target.checked) {
@@ -648,40 +666,52 @@ export const SchoolPresenceDashboard: React.FC = () => {
                                         }}
                                     />
                                 </td>
-                                <td className="p-3 text-center font-medium text-gray-500">{((currentPage - 1) * itemsPerPage) + idx + 1}</td>
-                                <td className="p-3 font-bold text-gray-800">{p.studentName}</td>
-                                <td className="p-3 font-medium text-gray-600">{p.className}</td>
-                                <td className="p-3 text-gray-600">{p.dateStr.split('-').reverse().join('-')}</td>
-                                <td className="p-3 text-center font-medium">{p.arrivalTimestamp ? p.arrivalTimestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                                <td className="p-3 text-center">
+                                <td className="px-4 py-4 text-center font-bold text-gray-400 text-xs">{((currentPage - 1) * itemsPerPage) + idx + 1}</td>
+                                <td className="px-6 py-4 font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{p.studentName}</td>
+                                <td className="px-6 py-4">
+                                    <span className="px-2.5 py-1 bg-gray-100/80 text-gray-600 rounded-lg text-xs font-bold uppercase tracking-wider border border-gray-200/50">
+                                        {p.className}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 font-medium text-gray-600 tabular-nums text-xs whitespace-nowrap">{p.dateStr.split('-').reverse().join('-')}</td>
+                                <td className="px-6 py-4 font-bold text-center tabular-nums text-gray-900">{p.arrivalTimestamp ? p.arrivalTimestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                                <td className="px-6 py-4 text-center">
                                     {p.arrivalStatus !== '-' ? (
-                                        <span className={cn("px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 w-fit", 
-                                            p.arrivalStatus.toLowerCase() === 'terlambat' ? 'bg-orange-100 text-orange-700' : 
-                                            p.arrivalStatus.toLowerCase() === 'hadir' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                                        )}>
-                                            {p.arrivalStatus.toLowerCase() === 'terlambat' ? <Clock size={12} /> : p.arrivalStatus.toLowerCase() === 'hadir' ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                                            {p.arrivalStatus}
-                                        </span>
+                                        <div className="flex justify-center">
+                                            <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 w-fit", 
+                                                p.arrivalStatus.toLowerCase() === 'terlambat' ? 'bg-orange-100 text-orange-700 ring-1 ring-orange-400/20 shadow-sm' : 
+                                                p.arrivalStatus.toLowerCase() === 'hadir' ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/20 shadow-sm' : 'bg-gray-100 text-gray-700 ring-1 ring-gray-400/20 shadow-sm'
+                                            )}>
+                                                {p.arrivalStatus.toLowerCase() === 'terlambat' ? <Clock size={12} strokeWidth={3} /> : p.arrivalStatus.toLowerCase() === 'hadir' ? <CheckCircle size={12} strokeWidth={3} /> : <AlertCircle size={12} strokeWidth={3} />}
+                                                {p.arrivalStatus}
+                                            </span>
+                                        </div>
                                     ) : <span className="text-gray-300">-</span>}
                                 </td>
-                                <td className="p-3 text-center font-medium">{p.departureTimestamp ? p.departureTimestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                                <td className="p-3 text-center">
+                                <td className="px-6 py-4 font-bold text-center tabular-nums text-gray-900">{p.departureTimestamp ? p.departureTimestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                                <td className="px-6 py-4 text-center">
                                     {p.departureStatus !== '-' ? (
-                                       <span className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700">{p.departureStatus}</span>
+                                       <div className="flex justify-center">
+                                           <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest bg-blue-100 text-blue-700 ring-1 ring-blue-400/20 shadow-sm">
+                                               {p.departureStatus}
+                                           </span>
+                                       </div>
                                     ) : <span className="text-gray-300">-</span>}
                                 </td>
-                                <td className="p-3">
-                                    <div className="flex items-center justify-center gap-1.5">
-                                        <button onClick={() => setSelectedStudent(p)} className="flex items-center gap-1 text-white bg-indigo-500 hover:bg-indigo-600 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-colors" title="Detail"><Eye size={12}/>DETAIL</button>
-                                        <button onClick={() => openEdit(p)} className="flex items-center gap-1 text-white bg-amber-500 hover:bg-amber-600 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-colors" title="Edit"><Edit size={12}/>EDIT</button>
-                                        <button onClick={() => handleDelete(p)} className="flex items-center gap-1 text-white bg-red-500 hover:bg-red-600 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-colors" title="Hapus"><Trash2 size={12}/>HAPUS</button>
+                                <td className="px-6 py-4">
+                                    <div className="flex items-center justify-center gap-2">
+                                        <button onClick={() => setSelectedStudent(p)} className="p-2 text-indigo-500 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all" title="Detail"><Eye size={16}/></button>
+                                        <button onClick={() => openEdit(p)} className="p-2 text-amber-500 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-all" title="Edit"><Edit size={16}/></button>
+                                        <button onClick={() => handleDelete(p)} className="p-2 text-red-500 hover:bg-red-50 hover:text-red-600 rounded-lg transition-all" title="Hapus"><Trash2 size={16}/></button>
                                     </div>
                                 </td>
                             </tr>
                         ))}
                         {paginatedData.length === 0 && (
                             <tr>
-                                <td colSpan={10} className="p-6 text-center text-gray-500 font-medium">Tidak ada data kehadiran yang sesuai filter.</td>
+                                <td colSpan={10} className="p-12 text-center text-gray-400 font-medium italic bg-gray-50/50">
+                                    Tidak ada data kehadiran yang sesuai filter.
+                                </td>
                             </tr>
                         )}
                     </tbody>

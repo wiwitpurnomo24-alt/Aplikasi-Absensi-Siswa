@@ -3,7 +3,9 @@ import { motion } from 'motion/react';
 import { collection, query, limit, getDocs, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { SchoolData } from '../types';
-import { Save, Building2, MapPin, User, FileText, CheckCircle2, Image as ImageIcon, RefreshCw } from 'lucide-react';
+import { Save, Building2, MapPin, User, FileText, CheckCircle2, Image as ImageIcon, RefreshCw, Eye, EyeOff, Lock } from 'lucide-react';
+import { cn } from '../lib/utils';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function SchoolDataSettings() {
   const [loading, setLoading] = useState(true);
@@ -21,15 +23,29 @@ export default function SchoolDataSettings() {
     schoolLogoUrl: ''
   });
   const [errorMessage, setErrorMessage] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordStatus, setPasswordStatus] = useState<'none' | 'correct' | 'incorrect'>('none');
+  const [isSchoolNameEditingEnabled, setIsSchoolNameEditingEnabled] = useState(false);
 
   useEffect(() => {
     async function fetchSchoolData() {
       try {
-        const q = query(collection(db, 'schoolData'), limit(1));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const docData = snapshot.docs[0].data() as SchoolData;
-          setSchoolData({ ...docData, id: snapshot.docs[0].id });
+        // Try fetching 'identity' doc first
+        const { getDoc } = await import('firebase/firestore');
+        const identityDoc = await getDoc(getTenantDoc('schoolData', 'identity'));
+        
+        if (identityDoc.exists()) {
+          const docData = identityDoc.data() as SchoolData;
+          setSchoolData({ ...docData, id: 'identity' });
+        } else {
+          // Fallback to legacy limit(1)
+          const q = query(getTenantCollection('schoolData'), limit(1));
+          const snapshot = await getDocs(q);
+          if (!snapshot.empty) {
+            const docData = snapshot.docs[0].data() as SchoolData;
+            setSchoolData({ ...docData, id: snapshot.docs[0].id });
+          }
         }
       } catch (error) {
         console.error('Error fetching school data:', error);
@@ -40,19 +56,41 @@ export default function SchoolDataSettings() {
     fetchSchoolData();
   }, []);
 
+  const handlePasswordCheck = (val: string) => {
+    setPassword(val);
+    if (val === '@Dutatama123') {
+      setPasswordStatus('correct');
+      setIsSchoolNameEditingEnabled(true);
+    } else if (val.length >= 12) {
+      setPasswordStatus('incorrect');
+    } else {
+      setPasswordStatus('none');
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isSchoolNameEditingEnabled && password !== '@Dutatama123') {
+      setPasswordStatus('incorrect');
+      setTimeout(() => setPasswordStatus('none'), 3000);
+      return;
+    }
+
     setSaving(true);
     setSuccess(false);
     setErrorMessage('');
     try {
-      if (schoolData.id) {
-        await updateDoc(doc(db, 'schoolData', schoolData.id), { ...schoolData });
-      } else {
-        const newRef = doc(collection(db, 'schoolData'));
-        await setDoc(newRef, { ...schoolData });
-        setSchoolData(prev => ({ ...prev, id: newRef.id }));
+      const { id, ...dataToSave } = schoolData;
+      const docId = id || 'identity';
+      
+      const docRef = getTenantDoc('schoolData', docId);
+      await setDoc(docRef, dataToSave, { merge: true });
+      
+      if (!id) {
+        setSchoolData(prev => ({ ...prev, id: docId }));
       }
+      
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
@@ -120,18 +158,60 @@ export default function SchoolDataSettings() {
             </div>
 
             <div className="group space-y-1 md:col-span-2">
-              <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
-                <Building2 size={10} />
-                Nama Sekolah
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="NAMA SEKOLAH ANDA..."
-                className="w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-black text-sky-900 placeholder:text-sky-200 focus:ring-2 focus:ring-sky-100 focus:border-sky-500 outline-none transition-all"
-                value={schoolData.sekolah}
-                onChange={e => setSchoolData({ ...schoolData, sekolah: e.target.value })}
-              />
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-black text-sky-600 uppercase tracking-widest flex items-center gap-1.5 mb-0.5 pl-1">
+                  <Building2 size={10} />
+                  Nama Sekolah
+                </label>
+                
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Password untuk edit..."
+                      className={cn(
+                        "p-1.5 px-3 bg-sky-50 border rounded-lg text-[9px] font-bold outline-none transition-all w-48 pr-8",
+                        passwordStatus === 'correct' ? "border-green-300 text-green-700 bg-green-50" : 
+                        passwordStatus === 'incorrect' ? "border-red-300 text-red-700 bg-red-50" : "border-sky-100"
+                      )}
+                      value={password}
+                      onChange={e => handlePasswordCheck(e.target.value)}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-sky-400 hover:text-sky-600"
+                    >
+                      {showPassword ? <EyeOff size={10} /> : <Eye size={10} />}
+                    </button>
+                  </div>
+                  {passwordStatus !== 'none' && (
+                    <span className={cn("text-[8px] font-black uppercase tracking-tight", passwordStatus === 'correct' ? "text-green-600" : "text-red-500")}>
+                      {passwordStatus === 'correct' ? 'PASSWORD BENAR' : 'PASSWORD SALAH'}
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  disabled={!isSchoolNameEditingEnabled}
+                  placeholder="NAMA SEKOLAH ANDA..."
+                  className={cn(
+                    "w-full p-2 bg-sky-50/20 border border-sky-100 rounded-lg text-xs font-black placeholder:text-sky-200 outline-none transition-all",
+                    !isSchoolNameEditingEnabled ? "opacity-60 cursor-not-allowed bg-gray-50" : "text-sky-900 focus:ring-2 focus:ring-sky-100 focus:border-sky-500"
+                  )}
+                  value={schoolData.sekolah}
+                  onChange={e => setSchoolData({ ...schoolData, sekolah: e.target.value })}
+                />
+                {!isSchoolNameEditingEnabled && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <Lock size={12} />
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="group space-y-1">
@@ -186,7 +266,7 @@ export default function SchoolDataSettings() {
                       if (file) {
                          if (file.size > 500000) return alert('Max 500KB');
                          const reader = new FileReader();
-                         reader.onloadend = () => setSchoolData({ ...schoolData, schoolLogoUrl: reader.result as string });
+                         reader.onloadend = () => setSchoolData(prev => ({ ...prev, schoolLogoUrl: reader.result as string }));
                          reader.readAsDataURL(file);
                       }
                     }}

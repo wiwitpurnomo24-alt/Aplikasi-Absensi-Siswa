@@ -4,6 +4,7 @@ import { db, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { Save, Clock, Calendar, ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 interface SpecialSchedule {
   id: string;
@@ -12,9 +13,11 @@ interface SpecialSchedule {
   entryTime: string;
   departureTime: string;
   note: string;
+  isHoliday?: boolean;
+  targetClasses?: string[];
 }
 
-export const AttendanceConfig: React.FC = () => {
+export const AttendanceConfig: React.FC<{ classes: any[] }> = ({ classes }) => {
   const [config, setConfig] = useState({
     entryTime: '06:30',
     departureTime: '13:40',
@@ -27,14 +30,20 @@ export const AttendanceConfig: React.FC = () => {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const docRef = doc(db, 'schoolConfig', 'main');
+        const docRef = getTenantDoc('schoolConfig', 'main');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
+          const fetchedSchedules = (data.specialSchedules || []).map((s: any) => ({
+            ...s,
+            id: s.id || Math.random().toString(36).substring(2, 9),
+            isHoliday: s.isHoliday || false
+          }));
+          
           setConfig({
             entryTime: data.entryTime || '06:30',
             departureTime: data.departureTime || '13:40',
-            specialSchedules: data.specialSchedules || []
+            specialSchedules: fetchedSchedules
           });
         }
       } catch (error) {
@@ -45,9 +54,38 @@ export const AttendanceConfig: React.FC = () => {
   }, []);
 
   const handleSave = async () => {
+    // Validasi input utama
+    if (!config.entryTime || !config.departureTime) {
+      setStatus('Gagal: Waktu operasional utama harus diisi.');
+      setTimeout(() => setStatus(''), 5000);
+      return;
+    }
+
+    // Validasi jadwal khusus
+    const hasIncompleteSchedules = config.specialSchedules.some(s => 
+      !s.isHoliday && (s.date && (!s.date || !s.entryTime || !s.departureTime))
+    );
+
+    if (hasIncompleteSchedules) {
+      setStatus('Gagal: Pastikan Tanggal, Jam Masuk, dan Jam Pulang diisi pada jadwal khusus.');
+      setTimeout(() => setStatus(''), 5000);
+      return;
+    }
+
     setLoading(true);
     try {
-      await setDoc(doc(db, 'schoolConfig', 'main'), config);
+      // Bersihkan jadwal yang benar-benar kosong jika ada
+      const cleanSchedules = config.specialSchedules.filter(s => s.date && (s.isHoliday || (s.entryTime && s.departureTime)));
+      
+      const configToSave = {
+        ...config,
+        specialSchedules: cleanSchedules
+      };
+
+      await setDoc(getTenantDoc('schoolConfig', 'main'), configToSave);
+      
+      // Update state lokal dengan data yang sudah dibersihkan
+      setConfig(configToSave);
       setStatus('Konfigurasi berhasil disimpan.');
       setTimeout(() => setStatus(''), 3000);
     } catch (error) {
@@ -65,25 +103,31 @@ export const AttendanceConfig: React.FC = () => {
       specialSchedules: [
         ...prev.specialSchedules,
         {
-          id: Math.random().toString(36).substr(2, 9),
+          id: Math.random().toString(36).substring(2, 9),
           date: '',
           day: '',
           entryTime: '',
           departureTime: '',
-          note: ''
+          note: '',
+          isHoliday: false
         }
       ]
     }));
   };
 
-  const removeSpecialSchedule = (id: string) => {
-    setConfig(prev => ({
-      ...prev,
-      specialSchedules: prev.specialSchedules.filter(s => s.id !== id)
-    }));
+  const removeSpecialSchedule = (id: string, index: number) => {
+    if (window.confirm('Apakah Anda yakin ingin menghapus jadwal khusus ini?')) {
+      setConfig(prev => ({
+        ...prev,
+        specialSchedules: prev.specialSchedules.filter((s, idx) => {
+          if (id && s.id) return s.id !== id;
+          return idx !== index;
+        })
+      }));
+    }
   };
 
-  const updateSpecialSchedule = (id: string, field: keyof SpecialSchedule, value: string) => {
+  const updateSpecialSchedule = (id: string, field: keyof SpecialSchedule, value: any) => {
     setConfig(prev => ({
       ...prev,
       specialSchedules: prev.specialSchedules.map(s => {
@@ -94,6 +138,10 @@ export const AttendanceConfig: React.FC = () => {
             const dateObj = new Date(year, month - 1, day);
             const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
             updated.day = days[dateObj.getDay()];
+          }
+          if (field === 'isHoliday' && value) {
+            updated.entryTime = '00:00';
+            updated.departureTime = '00:00';
           }
           return updated;
         }
@@ -165,7 +213,7 @@ export const AttendanceConfig: React.FC = () => {
                 {config.specialSchedules.map((schedule, idx) => (
                   <div key={schedule.id || `schedule-${idx}`} className="relative p-4 border border-sky-100 bg-sky-50/30 rounded-2xl group/item hover:border-sky-300 transition-all">
                     <button 
-                      onClick={() => removeSpecialSchedule(schedule.id)}
+                      onClick={() => removeSpecialSchedule(schedule.id, idx)}
                       className="absolute top-3 right-3 p-1.5 bg-white text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all shadow-sm border border-gray-100"
                       title="Hapus"
                     >
@@ -174,7 +222,41 @@ export const AttendanceConfig: React.FC = () => {
                     
                     <h4 className="text-[8px] font-black text-sky-600 mb-3 uppercase tracking-widest pl-1">Jadwal Khusus #{idx + 1}</h4>
                     
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                      <div className="col-span-1 flex flex-col gap-2 p-2 mb-2 lg:mb-0">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input 
+                                type="checkbox"
+                                checked={schedule.isHoliday || false}
+                                onChange={(e) => updateSpecialSchedule(schedule.id, 'isHoliday', e.target.checked)}
+                                className="accent-red-500 w-3 h-3"
+                            />
+                            <span className="text-[9px] font-black text-red-500 uppercase">Libur</span>
+                        </label>
+                        <div className="space-y-1">
+                          <label className="block text-[8px] text-sky-400 font-black uppercase tracking-widest pl-1">Target Kelas</label>
+                          <div className="max-h-20 overflow-y-auto border border-sky-100 rounded p-1">
+                            {classes.map(cl => (
+                              <label key={cl.id} className="flex items-center gap-1.5 text-[9px]">
+                                <input 
+                                  type="checkbox"
+                                  checked={schedule.targetClasses?.includes(cl.name)}
+                                  onChange={(e) => {
+                                    const current = schedule.targetClasses || [];
+                                    const updated = e.target.checked
+                                      ? [...current, cl.name]
+                                      : current.filter(c => c !== cl.name);
+                                    updateSpecialSchedule(schedule.id, 'targetClasses', updated);
+                                  }}
+                                  className="accent-sky-500"
+                                />
+                                {cl.name}
+                              </label>
+                            ))}
+                          </div>
+                          <span className="text-[8px] text-gray-400 italic">Kosong = Semua</span>
+                        </div>
+                      </div>
                       <div className="space-y-1">
                         <label className="block text-[8px] text-sky-400 font-black uppercase tracking-widest pl-1">Tanggal</label>
                         <input 
@@ -198,8 +280,9 @@ export const AttendanceConfig: React.FC = () => {
                         <input 
                           type="time" 
                           value={schedule.entryTime}
+                          disabled={schedule.isHoliday}
                           onChange={(e) => updateSpecialSchedule(schedule.id, 'entryTime', e.target.value)}
-                          className="w-full text-[10px] font-bold p-2 bg-white border border-sky-100 rounded-lg focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none"
+                          className={cn("w-full text-[10px] font-bold p-2 bg-white border border-sky-100 rounded-lg focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none", schedule.isHoliday && "opacity-50 cursor-not-allowed")}
                         />
                       </div>
                       <div className="space-y-1">
@@ -207,8 +290,9 @@ export const AttendanceConfig: React.FC = () => {
                         <input 
                           type="time" 
                           value={schedule.departureTime}
+                          disabled={schedule.isHoliday}
                           onChange={(e) => updateSpecialSchedule(schedule.id, 'departureTime', e.target.value)}
-                          className="w-full text-[10px] font-bold p-2 bg-white border border-sky-100 rounded-lg focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none"
+                          className={cn("w-full text-[10px] font-bold p-2 bg-white border border-sky-100 rounded-lg focus:ring-4 focus:ring-sky-100 focus:border-sky-500 outline-none", schedule.isHoliday && "opacity-50 cursor-not-allowed")}
                         />
                       </div>
                       <div className="space-y-1">

@@ -29,7 +29,7 @@ export function handleFirestoreError(error: any, operationType: FirestoreErrorIn
     email: auth.currentUser?.email || '',
     emailVerified: auth.currentUser?.emailVerified || false,
     isAnonymous: auth.currentUser?.isAnonymous || false,
-    providerInfo: auth.currentUser?.providerData.map(p => ({
+    providerInfo: auth.currentUser?.providerData?.map(p => ({
       providerId: p.providerId,
       displayName: p.displayName || '',
       email: p.email || ''

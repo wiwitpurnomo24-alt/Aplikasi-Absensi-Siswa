@@ -43,11 +43,19 @@ import {
 
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, getDocs, getDoc, deleteDoc, doc, updateDoc, query, where, orderBy, onSnapshot, Timestamp, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, getDocs, getDoc, deleteDoc, doc, updateDoc, query, where, orderBy, onSnapshot, Timestamp, serverTimestamp, writeBatch, setDoc } from 'firebase/firestore';
 import { cn, formatDate, getTimeSafe } from '../lib/utils';
 import { Student, Teacher, AcademicYear, AttendanceRecord } from '../types';
 import { useAuthStore } from '../lib/auth-store';
 import * as XLSX from 'xlsx';
+import { 
+  PieChart, 
+  Pie, 
+  Cell, 
+  ResponsiveContainer, 
+  Tooltip,
+  Legend
+} from 'recharts';
 import { parseWhatsAppMessage } from '../lib/whatsapp-parser';
 import { ROLE_LABELS, CLASS_COLORS } from '../constants';
 import { useSearchParams } from 'react-router-dom';
@@ -58,6 +66,7 @@ import IndividualAttendance from '../components/IndividualAttendance';
 import AttendanceChart from '../components/AttendanceChart';
 import AttendanceTrendChart from '../components/AttendanceTrendChart';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
+import { AIPredictiveAnalytics } from '../components/AIPredictiveAnalytics';
 import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
 import SchoolDataSettings from '../components/SchoolDataSettings';
@@ -69,6 +78,7 @@ import { exportAttendanceToPDF, generateQRCodeDataUrl, printStudentCard } from '
 import QRCode from 'qrcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getTenantCollection, getTenantDoc, getSchoolCode } from '../lib/tenant';
 
 const getLucideIcon = (iconName: string) => {
   const icons: Record<string, any> = {
@@ -88,7 +98,7 @@ export default function AdminDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as any;
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'weekly-recap' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'academic-years' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'weekly-recap' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
   const [filterMonth, setFilterMonth] = useState('');
   const [filterSemester, setFilterSemester] = useState('');
 
@@ -107,6 +117,56 @@ export default function AdminDashboard() {
       setActiveTab('overview');
     }
   }, [tabParam]);
+
+  useEffect(() => {
+    // Otomatis hapus dokumen absen akhir bulan Juni (semester 2) dan Desember (semester 1)
+    const autoCleanupStorage = async () => {
+       const today = new Date();
+       const month = today.getMonth(); // 0 = Jan, 5 = Jun, 11 = Dec
+       const date = today.getDate();
+       
+       // Hanya jalankan di akhir bulan Juni atau Desember (misal tanggal >= 25)
+       if ((month === 5 && date >= 25) || (month === 11 && date >= 25)) {
+           try {
+              const currentPeriod = `${today.getFullYear()}-${month}`;
+              const docRef = getTenantDoc('schoolConfig', 'systemMaintenance');
+              const configDoc = await getDoc(docRef);
+              const data = configDoc.data();
+              
+              if (data && data.lastAutoCleanup === currentPeriod) {
+                  return; // Sudah dijalankan periode ini
+              }
+
+              const { listAll, deleteObject, ref } = await import('firebase/storage');
+              const { storage } = await import('../lib/firebase');
+              
+              const baseRef = ref(storage, 'attendance_docs/');
+              const res = await listAll(baseRef);
+              
+              for (const folderRef of res.prefixes) {
+                 const folderRes = await listAll(folderRef);
+                 for (const itemRef of folderRes.items) {
+                    await deleteObject(itemRef).catch(console.error);
+                 }
+              }
+              
+              await setDoc(docRef, {
+                  lastAutoCleanup: currentPeriod,
+                  updatedAt: new Date().toISOString()
+              }, { merge: true });
+
+              console.log("Auto-cleanup dokumen selesai dikerjakan.");
+           } catch (err) {
+              console.error("Error auto-cleanup storage:", err);
+           }
+       }
+    };
+
+    if (authReady && activeTab === 'overview') {
+        autoCleanupStorage();
+    }
+  }, [authReady, activeTab]);
+
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [roleManagementPage, setRoleManagementPage] = useState(1);
@@ -125,24 +185,38 @@ export default function AdminDashboard() {
   const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [migrationStatus, setMigrationStatus] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
   const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<Student | null>(null);
   const [studentAttendanceHistory, setStudentAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const [showStudentDetailModal, setShowStudentDetailModal] = useState(false);
+  const [registeredSchools, setRegisteredSchools] = useState<any[]>([]);
+  const isSuperAdmin = user?.email === 'wiwitpurnomo24@guru.smp.belajar.id';
+
+  const fetchRegisteredSchools = async () => {
+    if (!isSuperAdmin) return;
+    try {
+      const q = query(collection(db, 'schools'));
+      const snap = await getDocs(q);
+      setRegisteredSchools(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Error fetching schools:", err);
+    }
+  };
 
   const handleShowStudentDetail = async (student: Student) => {
     setSelectedStudentForDetail(student);
     try {
-      const q = query(collection(db, 'attendance'), where('studentId', '==', student.id), orderBy('date', 'desc'));
+      const q = query(getTenantCollection('attendance'), where('studentId', '==', student.id), orderBy('date', 'desc'));
       const attSnapshot = await getDocs(q);
       setStudentAttendanceHistory(attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord)));
       setShowStudentDetailModal(true);
     } catch (err: any) {
       console.warn("handleShowStudentDetail orderBy failed, using fallback:", err);
       try {
-        const fallbackQ = query(collection(db, 'attendance'), where('studentId', '==', student.id));
+        const fallbackQ = query(getTenantCollection('attendance'), where('studentId', '==', student.id));
         const attSnapshot = await getDocs(fallbackQ);
         const data = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord))
           .sort((a,b) => (a.date === b.date ? 0 : (a.date < b.date ? 1 : -1)));
@@ -175,12 +249,77 @@ export default function AdminDashboard() {
   };
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [newAttendanceNotification, setNewAttendanceNotification] = useState<string | null>(null);
+  const [storageUsage, setStorageUsage] = useState({ used: 0, total: 5 * 1024 * 1024 * 1024, fileCount: 0 }); // Default 5GB
+  const [isUpdatingStorageStats, setIsUpdatingStorageStats] = useState(false);
+
+  const calculateStorageStats = async () => {
+    setIsUpdatingStorageStats(true);
+    try {
+      const { listAll, getMetadata, ref } = await import('firebase/storage');
+      const { storage } = await import('../lib/firebase');
+      const baseRef = ref(storage, 'attendance_docs/');
+      
+      let totalSize = 0;
+      let totalFiles = 0;
+
+      const listAllFiles = async (folderRef: any) => {
+        const res = await listAll(folderRef);
+        for (const itemRef of res.items) {
+          const metadata = await getMetadata(itemRef);
+          totalSize += metadata.size;
+          totalFiles += 1;
+        }
+        for (const subFolderRef of res.prefixes) {
+          await listAllFiles(subFolderRef);
+        }
+      };
+
+      await listAllFiles(baseRef);
+      setStorageUsage(prev => ({ ...prev, used: totalSize, fileCount: totalFiles }));
+    } catch (err) {
+      console.error("Error calculating storage stats:", err);
+    } finally {
+      setIsUpdatingStorageStats(false);
+    }
+  };
+
+  const handleManualCleanup = () => {
+    showConfirm("Apakah Anda yakin ingin menghapus SEMUA dokumen pendukung absensi (PDF/Foto) sekarang? Tindakan ini tidak dapat dibatalkan.", async () => {
+       setLoading(true);
+       setStatusMessage("Sedang menghapus dokumen...");
+       try {
+          const { listAll, deleteObject, ref } = await import('firebase/storage');
+          const { storage } = await import('../lib/firebase');
+          
+          const baseRef = ref(storage, 'attendance_docs/');
+          const res = await listAll(baseRef);
+          
+          let deletedCount = 0;
+          for (const folderRef of res.prefixes) {
+             const folderRes = await listAll(folderRef);
+             for (const itemRef of folderRes.items) {
+                await deleteObject(itemRef);
+                deletedCount++;
+             }
+          }
+          
+          await calculateStorageStats();
+          alert(`Berhasil menghapus ${deletedCount} dokumen.`);
+       } catch (err: any) {
+          console.error(err);
+          alert("Gagal menghapus dokumen: " + err.message);
+       } finally {
+          setLoading(false);
+          setStatusMessage("");
+       }
+    });
+  };
 
   useEffect(() => {
     if (!authReady) return;
 
     const qAtt = query(
-      collection(db, 'attendance'),
+      getTenantCollection('attendance'),
       orderBy('submittedAt', 'desc')
     );
 
@@ -199,7 +338,7 @@ export default function AdminDashboard() {
     });
 
     const qNotif = query(
-      collection(db, 'notifications'),
+      getTenantCollection('notifications'),
       where('targetRole', '==', 'ADMIN'),
       orderBy('createdAt', 'desc')
     );
@@ -236,7 +375,7 @@ export default function AdminDashboard() {
         const isNowOfficer = selectedClassOfficers.includes(s.id!);
         const wasOfficer = (s as any).role === 'PETUGAS_ABSEN_KELAS';
         if (isNowOfficer !== wasOfficer) {
-          return updateDoc(doc(db, 'students', s.id!), {
+          return updateDoc(getTenantDoc('students', s.id!), {
             role: isNowOfficer ? 'PETUGAS_ABSEN_KELAS' : null
           });
         }
@@ -297,7 +436,7 @@ export default function AdminDashboard() {
     showConfirm(`Hapus ${toDelete.length} data ganda siswa (keep first)?`, async () => {
       setLoading(true);
       try {
-        const promises = toDelete.map(id => deleteDoc(doc(db, 'students', id)));
+        const promises = toDelete.map(id => deleteDoc(getTenantDoc('students', id)));
         await Promise.all(promises);
         fetchData();
         setStatusMessage(`${toDelete.length} data ganda berhasil dihapus`);
@@ -332,7 +471,7 @@ export default function AdminDashboard() {
     showConfirm(`Hapus ${toDelete.length} data ganda guru (keep first)?`, async () => {
       setLoading(true);
       try {
-        const promises = toDelete.map(id => deleteDoc(doc(db, 'teachers', id)));
+        const promises = toDelete.map(id => deleteDoc(getTenantDoc('teachers', id)));
         await Promise.all(promises);
         fetchData();
         setStatusMessage(`${toDelete.length} data ganda berhasil dihapus`);
@@ -349,7 +488,7 @@ export default function AdminDashboard() {
   const handleRemoveOfficer = (id: string) => {
     showConfirm('Hapus peran petugas dari siswa ini?', async () => {
       try {
-        await updateDoc(doc(db, 'students', id), { role: null });
+        await updateDoc(getTenantDoc('students', id), { role: null });
         fetchData();
         setStatusMessage('Petugas berhasil dihapus');
         setTimeout(() => setStatusMessage(''), 3000);
@@ -361,7 +500,7 @@ export default function AdminDashboard() {
 
   const markNotificationAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'notifications', id), { read: true });
+      await updateDoc(getTenantDoc('notifications', id), { read: true });
     } catch (err) {
       console.error(err);
     }
@@ -372,7 +511,7 @@ export default function AdminDashboard() {
     if (unread.length === 0) return;
     try {
       setLoading(true);
-      const promises = unread.map(n => updateDoc(doc(db, 'notifications', n.id), { read: true }));
+      const promises = unread.map(n => updateDoc(getTenantDoc('notifications', n.id), { read: true }));
       await Promise.all(promises);
       setLoading(false);
     } catch (err) {
@@ -383,7 +522,7 @@ export default function AdminDashboard() {
 
   const deleteNotification = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'notifications', id));
+      await deleteDoc(getTenantDoc('notifications', id));
     } catch (err) {
       console.error(err);
     }
@@ -399,7 +538,13 @@ export default function AdminDashboard() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState<any>({});
-  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data'>('umum');
+  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data' | 'schools' | 'peran_guru'>('umum');
+
+  useEffect(() => {
+    if (activeTab === 'settings' && settingsSubTab === 'data') {
+      calculateStorageStats();
+    }
+  }, [activeTab, settingsSubTab]);
 
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printClass, setPrintClass] = useState('');
@@ -546,7 +691,7 @@ export default function AdminDashboard() {
             const prefix = cleanClass.length >= 2 ? cleanClass.substring(0, 2) : cleanClass.padEnd(2, 'A');
             let pass = (prefix + noUrut).substring(0, 4);
 
-            promises.push(updateDoc(doc(db, 'students', s.id!), { parentPassword: pass }));
+            promises.push(updateDoc(getTenantDoc('students', s.id!), { parentPassword: pass }));
           });
         }
         await Promise.all(promises);
@@ -661,29 +806,29 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       const [stdSnap, teaSnap, attSnap, yearSnap, counsSnap, classSnap, subAttSnap, inqSnap, schoolSnap, presenceSnap, configSnap] = await Promise.all([
-        getDocs(collection(db, 'students')).catch(err => { console.error("Students fetch failed", err); return { docs: [] } as any; }),
-        getDocs(collection(db, 'teachers')).catch(err => { console.error("Teachers fetch failed", err); return { docs: [] } as any; }),
-        getDocs(query(collection(db, 'attendance'), orderBy('submittedAt', 'desc'))).catch(async err => {
+        getDocs(getTenantCollection('students')).catch(err => { console.error("Students fetch failed", err); return { docs: [] } as any; }),
+        getDocs(getTenantCollection('teachers')).catch(err => { console.error("Teachers fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(getTenantCollection('attendance'), orderBy('submittedAt', 'desc'))).catch(async err => {
           console.warn("Attendance orderBy failed, falling back to simple fetch:", err);
-          return getDocs(collection(db, 'attendance'));
+          return getDocs(getTenantCollection('attendance'));
         }),
-        getDocs(collection(db, 'academicYears')).catch(err => { console.error("Years fetch failed", err); return { docs: [] } as any; }),
-        getDocs(collection(db, 'counselors')).catch(err => { console.error("Counselors fetch failed", err); return { docs: [] } as any; }),
-        getDocs(collection(db, 'classes')).catch(err => { console.error("Classes fetch failed", err); return { docs: [] } as any; }),
-        getDocs(query(collection(db, 'subjectAttendance'), orderBy('createdAt', 'desc'))).catch(async err => {
+        getDocs(getTenantCollection('academicYears')).catch(err => { console.error("Years fetch failed", err); return { docs: [] } as any; }),
+        getDocs(getTenantCollection('counselors')).catch(err => { console.error("Counselors fetch failed", err); return { docs: [] } as any; }),
+        getDocs(getTenantCollection('classes')).catch(err => { console.error("Classes fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(getTenantCollection('subjectAttendance'), orderBy('createdAt', 'desc'))).catch(async err => {
           console.warn("SubAtt orderBy failed, falling back:", err);
-          return getDocs(collection(db, 'subjectAttendance'));
+          return getDocs(getTenantCollection('subjectAttendance'));
         }),
-        getDocs(query(collection(db, 'subjectInquiries'), orderBy('createdAt', 'desc'))).catch(async err => {
+        getDocs(query(getTenantCollection('subjectInquiries'), orderBy('createdAt', 'desc'))).catch(async err => {
           console.warn("Inquiries orderBy failed:", err);
-          return getDocs(collection(db, 'subjectInquiries'));
+          return getDocs(getTenantCollection('subjectInquiries'));
         }),
-        getDocs(collection(db, 'schoolData')).catch(err => { console.error("SchoolData fetch failed", err); return { docs: [] } as any; }),
-        getDocs(query(collection(db, 'schoolPresence'), where('timestamp', '>=', Timestamp.fromDate(new Date(new Date().setHours(0,0,0,0)))))).catch(async err => {
+        getDocs(getTenantCollection('schoolData')).catch(err => { console.error("SchoolData fetch failed", err); return { docs: [] } as any; }),
+        getDocs(query(getTenantCollection('schoolPresence'), where('timestamp', '>=', Timestamp.fromDate(new Date(new Date().setHours(0,0,0,0)))))).catch(async err => {
           console.warn("Presence query failed:", err);
           return { docs: [] } as any;
         }),
-        getDoc(doc(db, 'schoolConfig', 'main')).catch(err => { console.error("Config fetch failed", err); return { exists: () => false } as any; })
+        getDoc(getTenantDoc('schoolConfig', 'main')).catch(err => { console.error("Config fetch failed", err); return { exists: () => false } as any; })
       ]);
 
       setPresenceRecords(presenceSnap.docs.map(d => ({ ...d.data(), id: d.id })));
@@ -716,6 +861,10 @@ export default function AdminDashboard() {
       }
       setCounselors(counsSnap.docs.map(d => ({ ...d.data(), id: d.id })));
       setClasses(classSnap.docs.map(d => ({ ...d.data(), id: d.id })));
+      
+      if (isSuperAdmin) {
+        await fetchRegisteredSchools();
+      }
     } catch (err: any) {
       console.error("Firestore fetch error:", err);
       handleFirestoreError(err, 'list', 'Admin initial data fetch');
@@ -724,9 +873,33 @@ export default function AdminDashboard() {
     }
   };
 
+  const displayStudents = useMemo(() => {
+    if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+      const managed = user.managedClasses || [];
+      return students.filter(s => managed.includes(s.className));
+    }
+    return students;
+  }, [students, user, filterMode]);
+
+  const displayAttendance = useMemo(() => {
+    if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+      const managed = user.managedClasses || [];
+      return attendance.filter(a => managed.includes(a.className));
+    }
+    return attendance;
+  }, [attendance, user, filterMode]);
+
+  const displayClasses = useMemo(() => {
+     if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+       const managed = user.managedClasses || [];
+       return classes.filter(c => managed.includes(c.name));
+     }
+     return classes;
+  }, [classes, user, filterMode]);
+
   const studentSummaryByClass = useMemo(() => {
     const summary: { [key: string]: { l: number; p: number; total: number } } = {};
-    students.forEach(s => {
+    displayStudents.forEach(s => {
       const cls = s.className || 'Unknown';
       if (!summary[cls]) summary[cls] = { l: 0, p: 0, total: 0 };
       const gender = (s.gender || '').trim().toLowerCase();
@@ -736,17 +909,17 @@ export default function AdminDashboard() {
     });
     return Object.entries(summary)
       .sort(([a], [b]) => (a || '').localeCompare(b || '', undefined, { numeric: true, sensitivity: 'base' }));
-  }, [students]);
+  }, [displayStudents]);
 
   const totalStudentStats = useMemo(() => {
-    return students.reduce((acc, s) => {
+    return displayStudents.reduce((acc, s) => {
       const gender = (s.gender || '').trim().toLowerCase();
       if (gender === 'l' || gender.startsWith('laki')) acc.l++;
       else if (gender === 'p' || gender.startsWith('perem')) acc.p++;
       acc.total++;
       return acc;
     }, { l: 0, p: 0, total: 0 });
-  }, [students]);
+  }, [displayStudents]);
 
   useEffect(() => {
     if (user && authReady) {
@@ -757,7 +930,7 @@ export default function AdminDashboard() {
 
   const generatePasswordsForClass = async (className: string) => {
     try {
-      const q = query(collection(db, 'students'), where('className', '==', className));
+      const q = query(getTenantCollection('students'), where('className', '==', className));
       const snap = await getDocs(q);
       const classStudents = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
       const promises = [];
@@ -767,7 +940,7 @@ export default function AdminDashboard() {
         const prefix = cleanClass.length >= 2 ? cleanClass.substring(0, 2) : cleanClass.padEnd(2, 'A');
         const pass = (prefix + noUrut).substring(0, 4);
         if (s.parentPassword !== pass) {
-          promises.push(updateDoc(doc(db, 'students', s.id!), { parentPassword: pass }));
+          promises.push(updateDoc(getTenantDoc('students', s.id!), { parentPassword: pass }));
         }
       });
       await Promise.all(promises);
@@ -786,9 +959,10 @@ export default function AdminDashboard() {
           activeTab === 'teachers-list' ? 'teachers' :
           activeTab === 'subject-teachers' ? 'teachers' :
           activeTab === 'classes' ? 'classes' : 
-          activeTab === 'counselors' ? 'counselors' : 
+          activeTab === 'counselors' ? 'teachers' : 
           activeTab === 'role-management-guru' || activeTab === 'role-management-petugas' ? 'users' :
-          activeTab === 'settings' ? 'academicYears' : '';
+          activeTab === 'academic-years' ? 'academicYears' :
+          activeTab === 'settings' ? (settingsSubTab === ( 'schools' as any) ? 'schools' : 'academicYears') : '';
 
       if (!colName) {
         setLoading(false);
@@ -801,8 +975,13 @@ export default function AdminDashboard() {
       if (activeTab === 'counselors') {
         payload = {
           ...payload,
-          managedClasses: formData.managedClasses ? (Array.isArray(formData.managedClasses) ? formData.managedClasses : formData.managedClasses.split(',').map((s: string) => s.trim())) : []
+          managedClasses: formData.managedClasses ? (Array.isArray(formData.managedClasses) ? formData.managedClasses : formData.managedClasses.split(',').map((s: string) => s.trim())) : [],
+          status: ['Guru BK']
         };
+        // Auto password: first 8 digits of NIP
+        if (payload.nip && payload.nip.length >= 8) {
+          payload.password = payload.nip.substring(0, 8);
+        }
       }
       if (activeTab === 'teachers' || activeTab === 'teachers-list' || activeTab === 'subject-teachers') {
         payload = {
@@ -842,37 +1021,56 @@ export default function AdminDashboard() {
         // We are updating a teacher's specific roles (Wali Kelas, etc)
         const { id, isChangingRole, ...dataToUpdate } = payload;
         Object.keys(dataToUpdate).forEach(key => dataToUpdate[key] === undefined && delete dataToUpdate[key]);
-        await updateDoc(doc(db, 'teachers', id), dataToUpdate);
+        await updateDoc(getTenantDoc('teachers', id), dataToUpdate);
 
         // SYNC: If Wali Kelas, update the classes collection
         if (dataToUpdate.status?.includes('Wali Kelas') && dataToUpdate.className) {
           const targetClass = classes.find(c => c.name === dataToUpdate.className);
           if (targetClass) {
-            await updateDoc(doc(db, 'classes', targetClass.id), { waliKelasId: id });
+            await updateDoc(getTenantDoc('classes', targetClass.id), { waliKelasId: id });
           }
           // Optional: Clear other classes that might have this teacher as wali
           const otherClasses = classes.filter(c => c.waliKelasId === id && c.name !== dataToUpdate.className);
           for (const oc of otherClasses) {
-            await updateDoc(doc(db, 'classes', oc.id), { waliKelasId: null });
+            await updateDoc(getTenantDoc('classes', oc.id), { waliKelasId: null });
           }
         } else if (!dataToUpdate.status?.includes('Wali Kelas')) {
            // If no longer wali kelas, clear from classes collection
            const myClasses = classes.filter(c => c.waliKelasId === id);
            for (const mc of myClasses) {
-             await updateDoc(doc(db, 'classes', mc.id), { waliKelasId: null });
+             await updateDoc(getTenantDoc('classes', mc.id), { waliKelasId: null });
            }
         }
       } else if (formData.id) {
         // Update existing
-        const { id, ...dataToUpdate } = payload;
+        const { id, type, ...dataToUpdate } = payload;
         Object.keys(dataToUpdate).forEach(key => dataToUpdate[key] === undefined && delete dataToUpdate[key]);
-        await updateDoc(doc(db, colName, id), dataToUpdate);
+        if (colName === 'schools') {
+          const { setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'schools', id), dataToUpdate, { merge: true });
+          await fetchRegisteredSchools();
+        } else {
+          await updateDoc(getTenantDoc(colName, id), dataToUpdate);
+        }
       } else {
         // Add new
-        if (activeTab === 'settings') {
+        if ((activeTab === 'settings' || activeTab === 'academic-years') && colName === 'academicYears') {
            payload = { ...payload, active: false };
         }
-        await addDoc(collection(db, colName), payload);
+        
+        if (colName === 'schools') {
+          const { id: schoolIdToSet, type, ...schoolData } = formData;
+          if (!schoolIdToSet) {
+            alert('Kode Sekolah harus diisi!');
+            setLoading(false);
+            return;
+          }
+          const { setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'schools', schoolIdToSet), schoolData);
+          await fetchRegisteredSchools();
+        } else {
+          await addDoc(getTenantCollection(colName), payload);
+        }
       }
 
       if (activeTab === 'students' && payload.className) {
@@ -904,9 +1102,10 @@ export default function AdminDashboard() {
       
       let matchCounselor = true;
       if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
-        matchCounselor = user.managedClasses?.includes(a.className) || false;
+        const managed = user.managedClasses || [];
+        matchCounselor = managed.includes(a.className);
       }
-
+      
       return matchSearch && matchDate && matchClass && matchType && matchCounselor;
     });
   }, [attendance, searchTerm, filterDate, classFilter, filterType, user, filterMode]);
@@ -950,9 +1149,11 @@ export default function AdminDashboard() {
         status: 'Approved',
         source: 'WhatsApp',
         submittedAt: serverTimestamp(),
+        processedBy: user?.name || 'Admin',
+        processedById: user?.uid || null
       };
 
-      await addDoc(collection(db, 'attendance'), payload);
+      await addDoc(getTenantCollection('attendance'), payload);
       setShowImportModal(false);
       setWaText('');
       setParsedWAData(null);
@@ -969,22 +1170,50 @@ export default function AdminDashboard() {
 
   // Calculate Stats
   const today = new Date().toISOString().split('T')[0];
-  const stats = {
-    totalStudents: students.length,
-    sakit: attendance.filter(a => a.type === 'Sakit').length,
-    izin: attendance.filter(a => a.type === 'Izin').length,
-    dispensasi: attendance.filter(a => a.type === 'Dispensasi').length,
-    todaySakit: attendance.filter(a => a.type === 'Sakit' && a.date === today).length,
-    todayIzin: attendance.filter(a => a.type === 'Izin' && a.date === today).length,
-    todayDispensasi: attendance.filter(a => a.type === 'Dispensasi' && a.date === today).length,
-    todayAlpa: attendance.filter(a => a.type === 'Alpa' && a.date === today).length + subjectAttendances.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length,
-    todayOnTime: presenceRecords.filter(p => p.type === 'arrival' && (p.status === 'Tepat Waktu' || p.status === 'Hadir')).length,
-    todayLate: presenceRecords.filter(p => p.type === 'arrival' && p.status === 'Terlambat').length,
-  };
+  const stats = useMemo(() => {
+    let baseStudents = students;
+    let baseAttendance = attendance;
+    let baseSubjectAttendance = subjectAttendances;
+    let basePresence = presenceRecords;
+
+    if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+      const managed = user.managedClasses || [];
+      baseStudents = students.filter(s => managed.includes(s.className));
+      baseAttendance = attendance.filter(a => managed.includes(a.className));
+      baseSubjectAttendance = subjectAttendances.filter(a => managed.includes(a.className));
+      basePresence = presenceRecords.filter(p => {
+        const student = students.find(s => s.id === p.studentId);
+        return student && managed.includes(student.className);
+      });
+    }
+
+    return {
+      totalStudents: baseStudents.length,
+      sakit: baseAttendance.filter(a => a.type === 'Sakit').length,
+      izin: baseAttendance.filter(a => a.type === 'Izin').length,
+      dispensasi: baseAttendance.filter(a => a.type === 'Dispensasi').length,
+      todaySakit: baseAttendance.filter(a => a.type === 'Sakit' && a.date === today).length,
+      todayIzin: baseAttendance.filter(a => a.type === 'Izin' && a.date === today).length,
+      todayDispensasi: baseAttendance.filter(a => a.type === 'Dispensasi' && a.date === today).length,
+      todayAlpa: baseAttendance.filter(a => a.type === 'Alpa' && a.date === today).length + baseSubjectAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length,
+      todayOnTime: basePresence.filter(p => p.type === 'arrival' && (p.status === 'Tepat Waktu' || p.status === 'Hadir')).length,
+      todayLate: basePresence.filter(p => p.type === 'arrival' && p.status === 'Terlambat').length,
+    };
+  }, [students, attendance, subjectAttendances, presenceRecords, user, filterMode, today]);
 
   const todayAttendanceByClass = useMemo(() => {
     const summary: { [key: string]: { sakit: number, izin: number, dispensasi: number, alpa: number, total: number } } = {};
-    attendance
+    
+    let baseAttendance = attendance;
+    let baseSubjectAttendance = subjectAttendances;
+
+    if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+      const managed = user.managedClasses || [];
+      baseAttendance = attendance.filter(a => managed.includes(a.className));
+      baseSubjectAttendance = subjectAttendances.filter(a => managed.includes(a.className));
+    }
+
+    baseAttendance
       .filter(a => a.date === today)
       .forEach(a => {
         if (!summary[a.className]) {
@@ -998,7 +1227,7 @@ export default function AdminDashboard() {
       });
     
     // Also include alpa from subjectAttendances
-    subjectAttendances
+    baseSubjectAttendance
       .filter(a => a.date === today && (a.type === 'Alpa' || a.status === 'A'))
       .forEach(a => {
         if (!summary[a.className]) {
@@ -1009,7 +1238,7 @@ export default function AdminDashboard() {
       });
 
     return Object.entries(summary).sort((a, b) => (a[0] || '').localeCompare(b[0] || '', undefined, { numeric: true }));
-  }, [attendance, subjectAttendances, today]);
+  }, [attendance, subjectAttendances, today, user, filterMode]);
 
   const handleStatusUpdate = async (id: string, newStatus: 'Approved' | 'Rejected') => {
     let reason = '';
@@ -1022,7 +1251,7 @@ export default function AdminDashboard() {
       // Find the attendance record to get studentId
       const record = attendance.find(a => a.id === id);
       if (record) {
-        await addDoc(collection(db, 'notifications'), {
+        await addDoc(getTenantCollection('notifications'), {
           studentId: record.studentId,
           targetRole: 'PARENT',
           title: newStatus === 'Approved' ? '✅ Izin Disetujui (Admin)' : '❌ Izin Ditolak (Admin)',
@@ -1034,12 +1263,29 @@ export default function AdminDashboard() {
         });
       }
 
-      await updateDoc(doc(db, 'attendance', id), { 
+      await updateDoc(getTenantDoc('attendance', id), { 
         status: newStatus,
         statusReason: reason,
         processedAt: serverTimestamp(),
         processedBy: user?.name || 'Admin'
       });
+
+      // Send WhatsApp Notification to Parent
+      if (record && record.parentPhone) {
+        fetch('/api/attendance/notify-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: getSchoolCode(),
+            studentName: record.studentName,
+            type: record.type,
+            date: record.date,
+            status: newStatus,
+            statusReason: reason,
+            parentPhone: record.parentPhone
+          })
+        }).catch(err => console.error("WA Status Notification failed", err));
+      }
       
       // Early Warning Check on Approval
       if (newStatus === 'Approved' && record) {
@@ -1061,7 +1307,12 @@ export default function AdminDashboard() {
     showConfirm('Apakah Anda yakin ingin menghapus data ini?', async () => {
       setLoading(true);
       try {
-        await deleteDoc(doc(db, coll, id));
+        if (coll === 'schools') {
+          await deleteDoc(doc(db, 'schools', id));
+          if (isSuperAdmin) await fetchRegisteredSchools();
+        } else {
+          await deleteDoc(getTenantDoc(coll, id));
+        }
         await fetchData();
         setStatusMessage('Data berhasil dihapus!');
         setTimeout(() => setStatusMessage(''), 3000);
@@ -1082,7 +1333,7 @@ export default function AdminDashboard() {
     showConfirm('PERINGATAN: Hapus SELURUH data siswa? Tindakan ini tidak dapat dibatalkan.', async () => {
       setLoading(true);
       try {
-        const promises = students.map(s => deleteDoc(doc(db, 'students', s.id)));
+        const promises = students.map(s => deleteDoc(getTenantDoc('students', s.id)));
         await Promise.all(promises);
         setSelectedStudents([]);
         fetchData();
@@ -1099,7 +1350,7 @@ export default function AdminDashboard() {
     showConfirm(`Hapus ${selectedStudents.length} siswa yang terpilih?`, async () => {
       setLoading(true);
       try {
-        const promises = selectedStudents.map(id => deleteDoc(doc(db, 'students', id)));
+        const promises = selectedStudents.map(id => deleteDoc(getTenantDoc('students', id)));
         await Promise.all(promises);
         setSelectedStudents([]);
         fetchData();
@@ -1116,7 +1367,7 @@ export default function AdminDashboard() {
     showConfirm('PERINGATAN: Hapus SELURUH data guru? Tindakan ini tidak dapat dibatalkan.', async () => {
       setLoading(true);
       try {
-        const promises = teachers.map(t => deleteDoc(doc(db, 'teachers', t.id!)));
+        const promises = teachers.map(t => deleteDoc(getTenantDoc('teachers', t.id!)));
         await Promise.all(promises);
         setSelectedTeachers([]);
         fetchData();
@@ -1134,7 +1385,7 @@ export default function AdminDashboard() {
     showConfirm(`Hapus ${selectedTeachers.length} guru yang terpilih?`, async () => {
       setLoading(true);
       try {
-        const promises = selectedTeachers.map(id => deleteDoc(doc(db, 'teachers', id)));
+        const promises = selectedTeachers.map(id => deleteDoc(getTenantDoc('teachers', id)));
         await Promise.all(promises);
         setSelectedTeachers([]);
         fetchData();
@@ -1445,7 +1696,7 @@ export default function AdminDashboard() {
     doc.rect(0, 49, 85.6, 5, 'F');
     doc.setFontSize(5);
     doc.setTextColor(100, 116, 139); // gray-500
-    doc.text("SIADPV - Sistem Informasi Absensi Peserta Didik", 42.8, 52.5, { align: 'center' });
+    doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
 
     doc.save(`KTA_GURU_${teacher.nip}_${teacher.name}.pdf`);
   };
@@ -1569,7 +1820,7 @@ export default function AdminDashboard() {
         doc.rect(1, pageHeight - 9, pageWidth - 2, 8, 'F');
         doc.setTextColor(100, 116, 139);
         doc.setFontSize(5);
-        doc.text("SIADPV - SISTEM ABSENSI DIGITAL", pageWidth / 2, pageHeight - 5.5, { align: 'center' });
+        doc.text("SIAGA - SISTEM ABSENSI DIGITAL", pageWidth / 2, pageHeight - 5.5, { align: 'center' });
         doc.setFontSize(4);
         doc.text("SMP NEGERI 2 MAGELANG", pageWidth / 2, pageHeight - 3.5, { align: 'center' });
     }
@@ -1938,12 +2189,12 @@ export default function AdminDashboard() {
       const backup: any = {
         version: '1.0',
         timestamp: new Date().toISOString(),
-        schoolName: schoolInfo?.schoolName || 'SIADPV',
+        schoolName: schoolInfo?.schoolName || 'SIAGA',
         data: {}
       };
 
       for (const collName of collections) {
-        const snapshot = await getDocs(collection(db, collName));
+        const snapshot = await getDocs(getTenantCollection(collName));
         backup.data[collName] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       }
 
@@ -1994,7 +2245,7 @@ export default function AdminDashboard() {
 
           for (const [collName, items] of Object.entries(backup.data)) {
             for (const item of (items as any[])) {
-              batch.set(doc(db, collName, item.id), item);
+              batch.set(getTenantDoc(collName, item.id), item);
               ops++;
               
               if (ops === 450) { 
@@ -2179,7 +2430,7 @@ export default function AdminDashboard() {
     doc.rect(0, 49, 85.6, 5, 'F');
     doc.setFontSize(5);
     doc.setTextColor(100, 116, 139); // gray-500
-    doc.text("SIADPV - Sistem Informasi Absensi Peserta Didik", 42.8, 52.5, { align: 'center' });
+    doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
 
     doc.save(`KTA_${student.nis}_${student.name}.pdf`);
   };
@@ -2253,7 +2504,7 @@ export default function AdminDashboard() {
         doc.rect(0, 49, 85.6, 5, 'F');
         doc.setFontSize(5);
         doc.setTextColor(100, 116, 139);
-        doc.text("SIADPV - Sistem Informasi Absensi Peserta Didik", 42.8, 52.5, { align: 'center' });
+        doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
       }
 
       doc.save(`Koleksi_KTA_Terpilih_${new Date().getTime()}.pdf`);
@@ -2307,23 +2558,37 @@ export default function AdminDashboard() {
       });
     });
 
-    return Array.from(classMap.values())
+    let result = Array.from(classMap.values());
+    
+    if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+      const managed = user.managedClasses || [];
+      result = result.filter(cl => managed.includes(cl.name));
+    }
+
+    return result
       .filter(cl => {
         const matchSearch = cl.name.toLowerCase().includes(searchTerm.toLowerCase());
         const matchFilter = !classFilter || cl.name === classFilter;
         return matchSearch && matchFilter;
       })
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
-  }, [classes, students, teachers, counselors, searchTerm, classFilter]);
+  }, [classes, students, teachers, counselors, searchTerm, classFilter, user, filterMode]);
 
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
       const matchSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           s.nis.toLowerCase().includes(searchTerm.toLowerCase());
       const matchClass = !classFilter || s.className === classFilter;
-      return matchSearch && matchClass;
+      
+      let matchCounselor = true;
+      if (user?.role === 'COUNSELOR' && filterMode === 'managed') {
+        const managed = user.managedClasses || [];
+        matchCounselor = managed.includes(s.className);
+      }
+      
+      return matchSearch && matchClass && matchCounselor;
     }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [students, searchTerm, classFilter]);
+  }, [students, searchTerm, classFilter, user, filterMode]);
 
   const paginatedStudents = useMemo(() => {
     const startIndex = (studentPage - 1) * itemsPerPage;
@@ -2376,9 +2641,11 @@ export default function AdminDashboard() {
   const totalSubjectTeacherPages = Math.ceil(filteredSubjectTeachers.length / itemsPerPage);
 
   const counselorTeachers = useMemo(() => {
-     return teachers.filter(t => t.status?.includes('Guru BK'))
-       .sort((a,b) => (a.name || '').localeCompare(b.name || ''));
-  }, [teachers]);
+      const fromTeachers = teachers.filter(t => t.status?.includes('Guru BK'));
+      // Merge with counselors collection to avoid data loss during migration
+      const fromCounselors = counselors.filter(c => !teachers.some(t => t.nip === c.nip));
+      return [...fromTeachers, ...fromCounselors].sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+  }, [teachers, counselors]);
 
   const paginatedCounselors = useMemo(() => {
     const startIndex = (counselorPage - 1) * itemsPerPage;
@@ -2609,17 +2876,49 @@ export default function AdminDashboard() {
       )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2 className="text-2xl font-extrabold text-gray-900">
-            {user?.role === 'COUNSELOR' ? 'Dashboard Guru BK' : 'Panel Administrasi'}
+          <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">
+            Selamat Datang, {user?.name}
           </h2>
-          <div className="flex items-center gap-2">
-            <p className="text-sm text-gray-500">
-              {user?.role === 'COUNSELOR' ? `Selamat datang, ${user.name}` : 'Kelola master data dan seluruh aktivitas sistem'}
+          <div className="flex flex-col gap-2 mt-1">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 bg-green-50 px-2.5 py-1 rounded-full border border-green-100 shadow-sm">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">Online</span>
+              </div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                {'Administrator Sistem'}
+              </p>
+              <ActiveAcademicYearDisplay />
+            </div>
+            <p className="text-sm text-gray-500 font-medium">
+               {'Kelola data sekolah, guru, siswa, dan konfigurasi administrasi presensi.'}
             </p>
-            <ActiveAcademicYearDisplay />
           </div>
         </div>
         <div className="flex gap-3">
+           {user?.role === 'COUNSELOR' && (
+             <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200">
+               <button 
+                 onClick={() => setFilterMode('all')}
+                 className={cn(
+                   "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                   filterMode === 'all' ? "bg-white text-indigo-600 shadow-sm" : "text-gray-400 hover:text-gray-600"
+                 )}
+               >
+                 Semua Data
+               </button>
+               <button 
+                 onClick={() => setFilterMode('managed')}
+                 className={cn(
+                   "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                   filterMode === 'managed' ? "bg-white text-indigo-600 shadow-sm" : "text-gray-400 hover:text-gray-600"
+                 )}
+               >
+                 Bimbingan Saya
+               </button>
+             </div>
+           )}
            <button 
              onClick={() => setShowNotifications(!showNotifications)}
              className={cn(
@@ -2667,6 +2966,8 @@ export default function AdminDashboard() {
               </div>
             ))}
           </div>
+
+          <AIPredictiveAnalytics attendanceData={displayAttendance} />
 
           {/* Daily Summary Ringkasan Hari Ini & Quick Access */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -2856,10 +3157,10 @@ export default function AdminDashboard() {
           {/* Chart */}
           <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
              <div className="lg:col-span-1">
-               <AttendanceChart attendance={attendance} />
+               <AttendanceChart attendance={displayAttendance} />
              </div>
              <div className="lg:col-span-1">
-               <AttendanceTrendChart attendance={attendance} />
+               <AttendanceTrendChart attendance={displayAttendance} />
              </div>
           </div>
           <div className="mb-6">
@@ -2941,7 +3242,7 @@ export default function AdminDashboard() {
                          <td className="px-6 py-4 border-r border-amber-50">
                             <div className="flex items-center gap-2 mb-1.5">
                               <span className={cn(
-                                "px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest",
+                                "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
                                 a.type === 'Sakit' ? "bg-red-100 text-red-600 border border-red-200" : "bg-yellow-100 text-yellow-600 border border-yellow-200"
                               )}>
                                 {a.type}
@@ -3015,173 +3316,159 @@ export default function AdminDashboard() {
 
           {activeTab.startsWith('role-management') && (
             <div className="space-y-8 p-6">
-              
-              <div className="flex flex-wrap gap-4 mb-4">
-                <button 
-                  onClick={() => setSearchParams({tab: 'role-management-guru'})} 
-                  className={cn("px-6 py-3 rounded-xl flex items-center gap-2 font-bold transition-all border-none outline-none", activeTab === 'role-management-guru' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
-                >
-                  <Users size={20} /> Kelola Peran Guru
-                </button>
-                <button 
-                  onClick={() => setSearchParams({tab: 'role-management-petugas'})} 
-                  className={cn("px-6 py-3 rounded-xl flex items-center gap-2 font-bold transition-all border-none outline-none", activeTab === 'role-management-petugas' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
-                >
-                  <GraduationCap size={20} /> Manajemen Petugas Kelas
-                </button>
-              </div>
-
-              {activeTab === 'role-management-guru' && (
-              <div className="space-y-6">
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                        <ShieldCheck className="text-indigo-600" size={24} />
-                        Manajemen Peran & Izin Guru
-                      </h2>
-                      <p className="text-sm text-gray-500 font-medium">Atur peran Wali Kelas, Guru Mapel, dan Guru BK serta kelas ampuhannya.</p>
-                    </div>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                      <input 
-                        type="text" 
-                        placeholder="Cari nama atau NIP guru..." 
-                        className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-64"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
-                    <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
-                      <Users size={18} /> Daftar Otoritas Guru
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black rounded-full uppercase">
-                        {teachers.length} Total Guru
-                      </span>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[1000px]">
-                      <thead>
-                        <tr className="bg-indigo-50/50 border-b border-indigo-100/50">
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">No</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Informasi Guru</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru Mapel (Bidang Studi)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Wali Kelas</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru BK (Kelas Bimbingan)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider text-center">Opsi Izin</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {teachers
-                          .filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm))
-                          .slice((roleManagementPage - 1) * 12, roleManagementPage * 12)
-                          .map((t, idx) => (
-                          <tr key={t.id ? `role-manage-row-${t.id}-${idx}` : `role-manage-row-idx-${idx}`} className="hover:bg-indigo-50/10 transition-colors">
-                            <td className="px-6 py-4 text-xs text-gray-400 font-bold">{(roleManagementPage - 1) * 12 + idx + 1}</td>
-                            <td className="px-6 py-4">
-                              <p className="text-sm font-bold text-gray-900 leading-none">{t.name}</p>
-                              <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-tighter">NIP: {t.nip || '-'}</p>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-wrap gap-1">
-                                {t.status?.includes('Guru Mapel') ? (
-                                  <>
-                                    <div className="w-full mb-1">
-                                      {(Array.isArray(t.subjects) ? t.subjects : []).length > 0 ? (
-                                        (Array.isArray(t.subjects) ? t.subjects : []).map((s, si) => (
-                                          <span key={`role-sub-${t.id || 't'}-${si}`} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded border border-blue-100 mr-1 uppercase">{s}</span>
-                                        ))
-                                      ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Subjek Kosong</span>}
-                                    </div>
-                                    <p className="text-[9px] text-gray-400 font-medium">Kelas: {(Array.isArray(t.taughtClasses) ? t.taughtClasses : []).join(', ') || '-'}</p>
-                                  </>
-                                ) : (
-                                  <span className="text-[10px] text-gray-300 italic">-</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              {t.status?.includes('Wali Kelas') ? (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                                  <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">{t.className || 'Error'}</span>
-                                </div>
-                              ) : (
-                                <span className="text-[10px] text-gray-300 italic">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-wrap gap-1">
-                                {t.status?.includes('Guru BK') ? (
-                                  <>
-                                    {(Array.isArray(t.managedClasses) ? t.managedClasses : []).length > 0 ? (
-                                      (Array.isArray(t.managedClasses) ? t.managedClasses : []).map((mc, mci) => (
-                                        <span key={`bk-${t.id}-${mci}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-black rounded border border-purple-100 uppercase">{mc}</span>
-                                      ))
-                                    ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Kelas Kosong</span>}
-                                  </>
-                                ) : (
-                                  <span className="text-[10px] text-gray-300 italic">-</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <button 
-                                onClick={() => {
-                                  setFormData({
-                                    ...t,
-                                    subjects: Array.isArray(t.subjects) ? t.subjects.join(', ') : (t.subjects || ''),
-                                    taughtClasses: Array.isArray(t.taughtClasses) ? t.taughtClasses.join(', ') : (t.taughtClasses || ''),
-                                    managedClasses: Array.isArray(t.managedClasses) ? t.managedClasses.join(', ') : (t.managedClasses || ''),
-                                    isChangingRole: true
-                                  });
-                                  setShowAddModal(true);
-                                }}
-                                className="px-4 py-2 bg-white border-2 border-indigo-600 text-indigo-600 rounded-xl text-[10px] font-black hover:bg-indigo-600 hover:text-white transition-all shadow-sm flex items-center gap-1.5 mx-auto uppercase tracking-wider"
-                              >
-                                <Key size={12} />
-                                Kelola Otoritas
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    
-                    {(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length > 12) && (
-                      <div className="p-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                          Hal {roleManagementPage} / {Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
-                        </span>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => setRoleManagementPage(p => Math.max(1, p - 1))}
-                            disabled={roleManagementPage === 1}
-                            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
-                          >
-                            Prev
-                          </button>
-                          <button 
-                            onClick={() => setRoleManagementPage(p => Math.min(Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12), p + 1))}
-                            disabled={roleManagementPage === Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
-                            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
-                          >
-                            Next
-                          </button>
+               {activeTab === 'role-management-guru' && (
+                 <div className="pt-6 border-t border-gray-100 space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
+                          <ShieldCheck size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-black text-gray-900 uppercase tracking-tight">Manajemen Peran Guru</h3>
+                          <p className="text-[10px] font-bold text-indigo-400 font-medium uppercase tracking-widest mt-0.5">Atur peran Wali Kelas, Guru Mapel, dan Guru BK serta kelas ampuhannya.</p>
                         </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              )}
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                        <input 
+                          type="text" 
+                          placeholder="Cari nama atau NIP guru..." 
+                          className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-64"
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                      <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
+                        <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                          <Users size={18} /> Daftar Otoritas Guru
+                        </h3>
+                        <div className="flex items-center gap-2">
+                          <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black rounded-full uppercase">
+                            {teachers.length} Total Guru
+                          </span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[1000px]">
+                          <thead>
+                            <tr className="bg-indigo-50/50 border-b border-indigo-100/50">
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">No</th>
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Informasi Guru</th>
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru Mapel (Bidang Studi)</th>
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Wali Kelas</th>
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Guru BK (Kelas Bimbingan)</th>
+                              <th className="px-6 py-4 text-[10px] font-bold text-indigo-700 uppercase tracking-wider text-center">Opsi Izin</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {teachers
+                              .filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm))
+                              .slice((roleManagementPage - 1) * 12, roleManagementPage * 12)
+                              .map((t, idx) => (
+                              <tr key={t.id ? `role-manage-row-${t.id}-${idx}` : `role-manage-row-idx-${idx}`} className="hover:bg-indigo-50/10 transition-colors">
+                                <td className="px-6 py-4 text-xs text-gray-400 font-bold">{(roleManagementPage - 1) * 12 + idx + 1}</td>
+                                <td className="px-6 py-4">
+                                  <p className="text-sm font-bold text-gray-900 leading-none">{t.name}</p>
+                                  <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-tighter">NIP: {t.nip || '-'}</p>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-wrap gap-1">
+                                    {t.status?.includes('Guru Mapel') ? (
+                                      <>
+                                        <div className="w-full mb-1">
+                                          {(Array.isArray(t.subjects) ? t.subjects : []).length > 0 ? (
+                                            (Array.isArray(t.subjects) ? t.subjects : []).map((s, si) => (
+                                              <span key={`role-sub-${t.id || 't'}-${si}`} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded border border-blue-100 mr-1 uppercase">{s}</span>
+                                            ))
+                                          ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Subjek Kosong</span>}
+                                        </div>
+                                        <p className="text-[9px] text-gray-400 font-medium">Kelas: {(Array.isArray(t.taughtClasses) ? t.taughtClasses : []).join(', ') || '-'}</p>
+                                      </>
+                                    ) : (
+                                      <span className="text-[10px] text-gray-300 italic">-</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  {t.status?.includes('Wali Kelas') ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+                                      <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">{t.className || 'Error'}</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-300 italic">-</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-wrap gap-1">
+                                    {t.status?.includes('Guru BK') ? (
+                                      <>
+                                        {(Array.isArray(t.managedClasses) ? t.managedClasses : []).length > 0 ? (
+                                          (Array.isArray(t.managedClasses) ? t.managedClasses : []).map((mc, mci) => (
+                                            <span key={`bk-${t.id}-${mci}`} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-black rounded border border-purple-100 uppercase">{mc}</span>
+                                          ))
+                                        ) : <span className="text-[9px] text-amber-500 font-bold uppercase italic">Kelas Kosong</span>}
+                                      </>
+                                    ) : (
+                                      <span className="text-[10px] text-gray-300 italic">-</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  <button 
+                                    onClick={() => {
+                                      setFormData({
+                                        ...t,
+                                        subjects: Array.isArray(t.subjects) ? t.subjects.join(', ') : (t.subjects || ''),
+                                        taughtClasses: Array.isArray(t.taughtClasses) ? t.taughtClasses.join(', ') : (t.taughtClasses || ''),
+                                        managedClasses: Array.isArray(t.managedClasses) ? t.managedClasses.join(', ') : (t.managedClasses || ''),
+                                        isChangingRole: true
+                                      });
+                                      setShowAddModal(true);
+                                    }}
+                                    className="px-4 py-2 bg-white border-2 border-indigo-600 text-indigo-600 rounded-xl text-[10px] font-black hover:bg-indigo-600 hover:text-white transition-all shadow-sm flex items-center gap-1.5 mx-auto uppercase tracking-wider"
+                                  >
+                                    <Key size={12} />
+                                    Kelola Otoritas
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        
+                        {(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length > 12) && (
+                          <div className="p-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
+                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                              Hal {roleManagementPage} / {Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
+                            </span>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => setRoleManagementPage(p => Math.max(1, p - 1))}
+                                disabled={roleManagementPage === 1}
+                                className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
+                              >
+                                Prev
+                              </button>
+                              <button 
+                                onClick={() => setRoleManagementPage(p => Math.min(Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12), p + 1))}
+                                disabled={roleManagementPage === Math.ceil(teachers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()) || t.nip?.includes(searchTerm)).length / 12)}
+                                className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs disabled:opacity-50 transition-all font-black uppercase text-gray-600 hover:bg-gray-50"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                 </div>
+               )}
+
+
 
               {activeTab === 'role-management-petugas' && (
               <>
@@ -3312,7 +3599,7 @@ export default function AdminDashboard() {
                       </div>
                       <div className="mt-4 pt-4 border-t border-emerald-200">
                          <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-600 uppercase">
-                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                           <div className="w-1 h-1 rounded-full bg-emerald-500"></div>
                            Data Berdasarkan Database Siswa
                          </div>
                       </div>
@@ -3724,7 +4011,7 @@ export default function AdminDashboard() {
                           setLoading(true);
                           setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Siswa' });
                           try {
-                            const snapshot = await getDocs(collection(db, 'students'));
+                            const snapshot = await getDocs(getTenantCollection('students'));
                             const existingStudents = snapshot.docs.map(doc => doc.data());
                             const existingNis = new Set(existingStudents.map(s => s.nis));
 
@@ -3742,7 +4029,7 @@ export default function AdminDashboard() {
                             const affectedClasses = new Set<string>();
                             for (const row of jsonData as any[]) {
                               if (row['Kelas']) affectedClasses.add(String(row['Kelas']));
-                              await addDoc(collection(db, 'students'), {
+                              await addDoc(getTenantCollection('students'), {
                                 name: row['Nama Lengkap'] || row['Nama'] || '',
                                 nis: String(row['NIS'] || ''),
                                 nisn: String(row['NISN'] || ''),
@@ -3835,7 +4122,7 @@ export default function AdminDashboard() {
                               const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
                               const phoneNumber = String(row['Nomor WA'] || '');
                               
-                              await addDoc(collection(db, 'teachers'), {
+                              await addDoc(getTenantCollection('teachers'), {
                                 name: row['Nama Guru'] || row['Nama'] || '',
                                 nip: nip,
                                 password: password,
@@ -3923,7 +4210,7 @@ export default function AdminDashboard() {
                               const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
                               const phoneNumber = String(row['Nomor WA'] || '');
 
-                              await addDoc(collection(db, 'teachers'), {
+                              await addDoc(getTenantCollection('teachers'), {
                                 name: row['Nama Guru'] || row['Nama'] || '',
                                 nip: nip,
                                 password: String(password),
@@ -4011,7 +4298,7 @@ export default function AdminDashboard() {
                               const subjects = subjectsRaw ? subjectsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
                               const taughtClasses = classesRaw ? classesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
 
-                              await addDoc(collection(db, 'teachers'), {
+                              await addDoc(getTenantCollection('teachers'), {
                                 name: row['Nama Guru'] || '',
                                 nip: nip,
                                 password: password,
@@ -4119,7 +4406,7 @@ export default function AdminDashboard() {
              )}
            </div>
 
-           {(activeTab !== 'attendance' && activeTab !== 'settings') && (
+           {(activeTab !== 'attendance' && activeTab !== 'settings' && activeTab !== 'academic-years') && (
              <div className="flex gap-2">
                {activeTab === 'classes' && (
                  <button 
@@ -5014,7 +5301,7 @@ export default function AdminDashboard() {
                                   <button 
                                     onClick={async () => {
                                       try {
-                                        await addDoc(collection(db, 'classes'), { name: cl.name });
+                                        await addDoc(getTenantCollection('classes'), { name: cl.name });
                                         fetchData();
                                       } catch (err) {
                                         alert('Gagal menyimpan kelas.');
@@ -5069,8 +5356,8 @@ export default function AdminDashboard() {
                <div className="flex p-1 bg-gray-100 rounded-2xl w-fit">
                  {[
                    { id: 'umum', label: 'Umum & Konfigurasi' },
-                   { id: 'akademik', label: 'Akademik' },
-                   { id: 'data', label: 'Data & Keamanan' }
+                   { id: 'data', label: 'Data & Keamanan' },
+                   ...(isSuperAdmin ? [{ id: 'schools', label: 'Sekolah' }] : [])
                  ].map(tab => (
                    <button
                      key={tab.id}
@@ -5088,9 +5375,336 @@ export default function AdminDashboard() {
                </div>
 
                {/* Content */}
-               {settingsSubTab === 'akademik' && (
-                 <div>
-                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-sky-50">
+               
+
+
+               {settingsSubTab === 'umum' && (
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <div className="md:col-span-2">
+                       <AttendanceConfig classes={classes} />
+                    </div>
+                    <LogoSettings />
+                    <WhatsAppSettings />
+                  </div>
+               )}
+
+               {settingsSubTab === 'data' && (
+                 <div className="pt-6 border-t border-gray-100 space-y-8">
+                    {/* Storage Management Section */}
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-xl shadow-gray-100/50">
+                       <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                             <HardDrive size={24} />
+                          </div>
+                          <div>
+                             <h4 className="text-base font-black text-gray-900 uppercase tracking-tight">Manajemen Penyimpanan & Kapasitas</h4>
+                             <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest mt-0.5">Pantau dan kelola penggunaan ruang Firebase Storage</p>
+                          </div>
+                          <div className="ml-auto">
+                             <button 
+                               onClick={calculateStorageStats}
+                               disabled={isUpdatingStorageStats}
+                               className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                               title="Segarkan data penyimpanan"
+                             >
+                                <RefreshCw className={cn(isUpdatingStorageStats && "animate-spin")} size={18} />
+                             </button>
+                          </div>
+                       </div>
+
+                       <div className="grid lg:grid-cols-2 gap-8 items-center">
+                          {/* Visualization */}
+                          <div className="relative aspect-square max-w-[220px] mx-auto lg:mx-0">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                   <Pie
+                                      data={[
+                                        { name: 'Digunakan', value: storageUsage.used },
+                                        { name: 'Tersedia', value: Math.max(0, storageUsage.total - storageUsage.used) }
+                                      ]}
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius="70%"
+                                      outerRadius="100%"
+                                      paddingAngle={0}
+                                      dataKey="value"
+                                      stroke="none"
+                                   >
+                                      <Cell fill="#3b82f6" />
+                                      <Cell fill="#f1f5f9" />
+                                   </Pie>
+                                   <Tooltip 
+                                      formatter={(value: number) => [`${(value / (1024 * 1024)).toFixed(2)} MB`, '']}
+                                   />
+                                </PieChart>
+                             </ResponsiveContainer>
+                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                <span className="text-2xl font-black text-gray-900">
+                                   {((storageUsage.used / storageUsage.total) * 100).toFixed(1)}%
+                                </span>
+                                <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-0.5">Terpakai</span>
+                             </div>
+                          </div>
+
+                          {/* Stats & Controls */}
+                          <div className="space-y-4">
+                             <div className="grid grid-cols-2 gap-3">
+                                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Digunakan</p>
+                                   <p className="text-xl font-black text-blue-600">
+                                      {(storageUsage.used / (1024 * 1024)).toFixed(2)} <span className="text-[10px] uppercase">MB</span>
+                                   </p>
+                                </div>
+                                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Jumlah File</p>
+                                   <p className="text-xl font-black text-gray-900">
+                                      {storageUsage.fileCount.toLocaleString()} <span className="text-[10px] uppercase">File</span>
+                                   </p>
+                                </div>
+                                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 col-span-2">
+                                   <div className="flex justify-between items-center mb-1.5">
+                                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Kapasitas Estimasi (Soft Limit)</p>
+                                      <p className="text-[9px] font-black text-gray-900 uppercase tracking-widest">5.00 GB</p>
+                                   </div>
+                                   <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                      <motion.div 
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${Math.min(100, (storageUsage.used / storageUsage.total) * 100)}%` }}
+                                        className="h-full bg-blue-600 rounded-full"
+                                      />
+                                   </div>
+                                </div>
+                             </div>
+
+                             <div className="p-5 bg-rose-50 border border-rose-100 rounded-3xl space-y-3">
+                                <div className="flex items-start gap-2.5">
+                                   <div className="p-1 bg-rose-100 text-rose-600 rounded-md shrink-0 mt-0.5">
+                                      <AlertCircle size={14} />
+                                   </div>
+                                   <div>
+                                      <p className="text-[11px] font-bold text-rose-900 uppercase tracking-tight">Pembersihan Dokumen Lama</p>
+                                      <p className="text-[9px] text-rose-500 font-medium mt-0.5 leading-relaxed">
+                                         Hapus semua foto/PDF lampiran absensi untuk membebaskan ruang penyimpanan.
+                                      </p>
+                                   </div>
+                                </div>
+                                <button 
+                                  onClick={handleManualCleanup}
+                                  className="w-full py-3 bg-rose-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-[0.98]"
+                                >
+                                   <Trash2 size={14} />
+                                   KOSONGKAN PENYIMPANAN SEKARANG
+                                </button>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-rose-50">
+                       <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
+                          <Database size={20} />
+                       </div>
+                       <div>
+                         <h3 className="text-base font-black text-gray-900 uppercase tracking-tight">Pencadangan Database</h3>
+                         <p className="text-[9px] font-bold text-rose-400 uppercase tracking-widest mt-0.5">Cadangkan seluruh data Firestore ke format JSON</p>
+                       </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-5 mb-5">
+                      <div className="bg-white p-5 rounded-3xl border border-gray-100 hover:border-indigo-200 transition-all group md:col-span-2">
+                         <div className="flex items-start gap-3 mb-3">
+                            <div className="p-2 bg-indigo-50 text-indigo-500 rounded-xl group-hover:bg-indigo-100 transition-colors">
+                               <RefreshCw size={24} />
+                            </div>
+                            <div>
+                               <h4 className="text-sm font-extrabold text-gray-900 uppercase tracking-tight">Migrasi Data Lama ke SMPN2</h4>
+                               <p className="text-[9px] font-bold text-gray-400 leading-relaxed uppercase mt-0.5">Gunakan tombol ini jika Anda adalah pengguna lama dan ingin memindahkan data Anda (siswa, guru, absen, dll) ke dalam tenant SMPN2 agar bisa dilihat kembali.</p>
+                            </div>
+                         </div>
+                         <button 
+                           onClick={async () => {
+                             if (!window.confirm("Yakin ingin memigrasi data dari root ke SMPN2? Proses ini bisa memakan waktu beberapa menit.")) return;
+                             setLoading(true);
+                             setMigrationStatus('Memulai migrasi...');
+                             try {
+                               const collectionsToMigrate = ['students', 'teachers', 'classes', 'attendance', 'notifications', 'schoolData', 'schoolPresence', 'academicYears', 'schoolConfig', 'subjectAttendance', 'subjectInquiries', 'counselors'];
+                               const { collection, getDocs, doc, setDoc } = await import('firebase/firestore');
+                               
+                               // Pastikan dokumen sekolah SMPN2 ada
+                               setMigrationStatus('Menyiapkan profil sekolah SMPN2...');
+                               await setDoc(doc(db, 'schools', 'SMPN2'), {
+                                 id: 'SMPN2',
+                                 name: 'SMP Negeri 2',
+                                 type: 'SCHOOL_CODE',
+                                 description: 'Hasil Migrasi Data Lama'
+                               }, { merge: true });
+
+                               for (const coll of collectionsToMigrate) {
+                                  setMigrationStatus(`Memigrasi data ${coll}...`);
+                                  const oldSnap = await getDocs(collection(db, coll)).catch(e => { console.error(e); return {docs:[]}; });
+                                  for (const d of oldSnap.docs) {
+                                     await setDoc(doc(db, 'schools', 'SMPN2', coll, d.id), d.data(), { merge: true });
+                                  }
+                               }
+                               setMigrationStatus('Selesai!');
+                               alert('Migrasi data ke SMPN2 berhasil! Silahkan refresh halaman.');
+                             } catch (e: any) {
+                               alert('Error migrasi: ' + e.message);
+                             } finally {
+                               setLoading(false);
+                               setMigrationStatus('');
+                             }
+                           }}
+                           disabled={loading}
+                           className="w-full py-3 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-[0.98] disabled:opacity-75 disabled:cursor-wait"
+                         >
+                           {migrationStatus ? (
+                             <>
+                               <RefreshCw className="animate-spin" size={16} />
+                               {migrationStatus}
+                             </>
+                           ) : (
+                             'MULAI MIGRASI DATA'
+                           )}
+                         </button>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-5">
+                      <div className="bg-white p-5 rounded-3xl border border-gray-100 hover:border-rose-200 transition-all group">
+                         <div className="flex items-start gap-3 mb-3">
+                            <div className="p-2 bg-rose-50 text-rose-500 rounded-xl group-hover:bg-rose-100 transition-colors">
+                               <Database size={24} />
+                            </div>
+                            <div>
+                               <h4 className="text-sm font-extrabold text-gray-900 uppercase tracking-tight">Backup Data Keseluruhan</h4>
+                               <p className="text-[9px] font-bold text-gray-400 leading-relaxed uppercase mt-0.5">Unduh database (Siswa, Guru, Absensi, dll) dalam format JSON untuk cadangan lokal.</p>
+                            </div>
+                         </div>
+                         <button 
+                           onClick={backupData}
+                           className="w-full py-3 bg-rose-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 shadow-xl shadow-rose-100 hover:bg-rose-700 transition-all active:scale-[0.98]"
+                         >
+                           <Download size={16} />
+                           BACK UP DATA SEKARANG
+                         </button>
+                         <p className="text-[8px] font-black text-center text-gray-300 uppercase tracking-[0.2em] mt-3 italic">Disarankan backup mingguan</p>
+                      </div>
+
+                      <div className="bg-gray-50/50 p-5 rounded-3xl border border-dashed border-gray-200 flex flex-col items-center justify-center text-center">
+                         <button onClick={() => fileInputRef.current?.click()} className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-rose-500 mb-2.5 border border-rose-100 shadow-sm hover:bg-rose-50 transition-all cursor-pointer">
+                            <CloudUpload size={20} />
+                         </button>
+                         <input type="file" ref={fileInputRef} onChange={restoreData} accept=".json" className="hidden" />
+                         <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Restorasi Data</h4>
+                         <p className="text-[8px] font-bold text-gray-300 uppercase tracking-tighter mt-1 px-4 leading-relaxed">Klik untuk memilih file backup JSON.</p>
+                      </div>
+                    </div>
+                 </div>
+               )}
+
+               {settingsSubTab === ('schools' as any) && isSuperAdmin && (
+                  <div className="pt-6 border-t border-gray-100">
+                     <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-indigo-50">
+                       <div className="flex items-center gap-3">
+                         <div className="p-2.5 bg-indigo-100 text-indigo-600 rounded-xl">
+                            <School size={24} />
+                         </div>
+                         <div>
+                           <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Manajemen Kode Sekolah</h3>
+                           <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mt-0.5">Kelola Akses dan Kode Unik Sekolah</p>
+                         </div>
+                       </div>
+                       <button 
+                         onClick={() => { setFormData({ type: 'SCHOOL_CODE', isNew: true }); setShowAddModal(true); }}
+                         className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 text-[11px] font-black uppercase tracking-widest"
+                       >
+                         <Plus size={18} />
+                         Tambah Sekolah
+                       </button>
+                     </div>
+                     
+                     <div className="overflow-x-auto rounded-3xl border border-gray-100 bg-white">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-gray-50 text-gray-500 uppercase font-black tracking-widest">
+                            <tr>
+                              <th className="px-6 py-4">Kode Sekolah</th>
+                              <th className="px-6 py-4">Nama Sekolah</th>
+                              <th className="px-6 py-4">Admin Email</th>
+                              <th className="px-6 py-4">Keterangan</th>
+                              <th className="px-6 py-4 text-center">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {registeredSchools.map((s, idx) => (
+                                <tr key={s.id || `school-${idx}`} className="hover:bg-gray-50 transition-all">
+                                  <td className="px-6 py-4 font-mono font-bold text-indigo-600">{s.id}</td>
+                                  <td className="px-6 py-4 font-black uppercase text-gray-900">{s.name}</td>
+                                  <td className="px-6 py-4 font-mono text-gray-600">{s.adminEmail || '-'}</td>
+                                  <td className="px-6 py-4 font-mono text-gray-600">{s.description || '-'}</td>
+                                  <td className="px-6 py-4 flex items-center justify-center gap-2">
+                                     <button 
+                                      onClick={() => { setFormData({ ...s, type: 'SCHOOL_CODE', isNew: false }); setShowAddModal(true); }}
+                                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                    >
+                                      <Edit size={16} />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDelete(s.id, 'schools')}
+                                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                  </div>
+               )}
+            </div>
+          )}
+
+          {activeTab === 'rekap' && (
+            <AttendanceRecapTable 
+              students={displayStudents} 
+              attendance={displayAttendance} 
+              classes={displayClasses}
+              showClassFilter={true}
+            />
+          )}
+
+          {activeTab === 'rekapSemester' && (
+            <SemesterAttendanceRecapTable
+              students={displayStudents}
+              attendance={displayAttendance}
+              classes={displayClasses}
+              showClassFilter={true}
+            />
+          )}
+
+          {activeTab === 'attendance-individual' && (
+            <IndividualAttendance
+              students={displayStudents}
+              attendance={displayAttendance}
+              classes={displayClasses}
+              onAttendanceChange={fetchData}
+            />
+          )}
+
+          {activeTab === 'weekly-recap' && (
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+               <WeeklyAttendanceRecap 
+                 attendance={displayAttendance} 
+                 students={displayStudents} 
+               />
+            </div>
+          )}
+
+          {activeTab === 'academic-years' && (
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-3 mb-6 pb-4 border-b border-sky-50">
                       <div className="p-2.5 bg-sky-100 text-sky-600 rounded-xl">
                          <CalendarIcon size={24} />
                       </div>
@@ -5101,12 +5715,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                        {academicYears.map((y, idx) => (
-                         <div key={y.id || `academic-year-${idx}`} className={cn(
-                          "p-6 rounded-3xl border transition-all duration-300 flex flex-col gap-4 relative overflow-hidden",
-                          y.active 
-                            ? "bg-white border-sky-200 shadow-xl shadow-sky-100/50 ring-2 ring-sky-500/20" 
-                            : "bg-white border-gray-100 hover:border-sky-200 hover:shadow-lg hover:shadow-sky-100/30"
-                         )}>
+                         <div key={y.id || `academic-year-${idx}`} className={cn("p-4 rounded-xl border transition-all duration-300 flex flex-col gap-3 relative overflow-hidden", y.active ? "bg-white border-sky-200 shadow-lg shadow-sky-100/50 ring-1 ring-sky-500/10" : "bg-white border-gray-100 hover:border-sky-200 hover:shadow-md hover:shadow-sky-100/30")}>
                             {y.active && (
                               <div className="absolute top-0 right-0 p-1 bg-sky-600 text-white rounded-bl-xl">
                                 <CheckCircle2 size={12} />
@@ -5114,11 +5723,11 @@ export default function AdminDashboard() {
                             )}
                             <div className="flex items-center justify-between">
                               <div>
-                                 <p className={cn("text-xl font-black uppercase", y.active ? "text-sky-900 font-black" : "text-gray-700")}>{y.year}</p>
+                                 <p className={cn("text-base font-black uppercase tracking-tight", y.active ? "text-sky-900 font-black" : "text-gray-700")}>{y.year}</p>
                                  <div className="flex items-center gap-1.5 mt-1">
-                                    <div className={cn("w-1.5 h-1.5 rounded-full", y.active ? "bg-green-500 animate-pulse" : "bg-gray-300")} />
-                                    <p className={cn("text-[9px] font-black uppercase tracking-widest", y.active ? "text-green-600" : "text-gray-400")}>
-                                      {y.active ? 'STATUS: AKTIF' : 'STATUS: NON-AKTIF'}
+                                    <div className={cn("w-1 h-1 rounded-full", y.active ? "bg-green-500 animate-pulse" : "bg-gray-300")} />
+                                    <p className={cn("text-[8px] font-black uppercase tracking-widest", y.active ? "text-green-600" : "text-gray-400")}>
+                                      {y.active ? 'AKTIF' : 'NON-AKTIF'}
                                     </p>
                                  </div>
                               </div>
@@ -5130,9 +5739,9 @@ export default function AdminDashboard() {
                                         setStatusMessage(`Sedang mengaktifkan ${y.year}...`);
                                         const activeYears = academicYears.filter(ay => ay.active);
                                         for (const ay of activeYears) {
-                                          await updateDoc(doc(db, 'academicYears', ay.id), { active: false });
+                                          await updateDoc(getTenantDoc('academicYears', ay.id), { active: false });
                                         }
-                                        await updateDoc(doc(db, 'academicYears', y.id), { active: true });
+                                        await updateDoc(getTenantDoc('academicYears', y.id), { active: true });
                                         await fetchData();
                                         setStatusMessage("Tahun akademik berhasil diaktifkan.");
                                         setTimeout(() => setStatusMessage(''), 3000);
@@ -5142,7 +5751,7 @@ export default function AdminDashboard() {
                                         setTimeout(() => setStatusMessage(''), 5000);
                                       }
                                     }}
-                                    className="px-4 py-2 bg-sky-600 text-white text-[10px] font-black rounded-xl shadow-lg shadow-sky-100 hover:bg-sky-700 transition-all active:scale-95 uppercase tracking-widest"
+                                    className="px-3 py-1.5 bg-sky-600 text-white text-[9px] font-black rounded-lg shadow-lg shadow-sky-100 hover:bg-sky-700 transition-all active:scale-95 uppercase tracking-widest"
                                   >
                                      AKTIFKAN
                                   </button>
@@ -5150,7 +5759,7 @@ export default function AdminDashboard() {
                                 <button 
                                   onClick={() => handleDelete(y.id!, 'academicYears')}
                                   className={cn(
-                                    "p-2.5 rounded-xl transition-all",
+                                    "p-1.5 rounded-lg transition-all",
                                     y.active ? "text-gray-200 cursor-not-allowed" : "text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-inner"
                                   )}
                                   disabled={y.active}
@@ -5164,7 +5773,7 @@ export default function AdminDashboard() {
                        ))}
                        <button 
                         onClick={() => { setFormData({}); setShowAddModal(true); }}
-                        className="p-6 rounded-3xl border-2 border-dashed border-sky-100 flex flex-col items-center justify-center text-sky-300 hover:bg-sky-50/50 hover:border-sky-300 hover:text-sky-400 transition-all min-h-[100px] group"
+                        className="p-6 rounded-3xl border-2 border-dashed border-sky-100 flex flex-col items-center justify-center text-sky-300 hover:bg-sky-50/50 hover:border-sky-300 hover:text-sky-400 transition-all min-h-[70px] group"
                        >
                           <Plus size={24} className="group-hover:scale-110 transition-transform" />
                           <span className="text-[10px] font-black uppercase tracking-widest mt-2">Tambah Periode</span>
@@ -5172,101 +5781,6 @@ export default function AdminDashboard() {
                     </div>
                  </div>
                )}
-
-               {settingsSubTab === 'umum' && (
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <LogoSettings />
-                    <WhatsAppSettings />
-                    <div className="md:col-span-2">
-                       <AttendanceConfig />
-                    </div>
-                  </div>
-               )}
-
-               {settingsSubTab === 'data' && (
-                 <div className="pt-6 border-t border-gray-100">
-                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-rose-50">
-                      <div className="p-2.5 bg-rose-100 text-rose-600 rounded-xl">
-                         <HardDrive size={24} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Kesehatan & Keamanan Data</h3>
-                        <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mt-0.5">Cadangkan seluruh data sistem secara berkala</p>
-                      </div>
-                    </div>
-
-                    <div className="grid md:grid-cols-2 gap-6">
-                      <div className="bg-white p-6 rounded-3xl border border-gray-100 hover:border-rose-200 transition-all group">
-                         <div className="flex items-start gap-4 mb-4">
-                            <div className="p-3 bg-rose-50 text-rose-500 rounded-2xl group-hover:bg-rose-100 transition-colors">
-                               <Database size={32} />
-                            </div>
-                            <div>
-                               <h4 className="font-extrabold text-gray-900 uppercase tracking-tight">Backup Data Keseluruhan</h4>
-                               <p className="text-[10px] font-bold text-gray-400 leading-relaxed uppercase mt-1">Unduh seluruh database (Siswa, Guru, Absensi, dll) dalam format JSON untuk dipindahkan ke Penyimpanan Lokal (Hard Disk) atau Flash Disk.</p>
-                            </div>
-                         </div>
-                         <button 
-                           onClick={backupData}
-                           className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 shadow-xl shadow-rose-100 hover:bg-rose-700 transition-all active:scale-[0.98]"
-                         >
-                           <Download size={18} />
-                           BACK UP DATA SEKARANG
-                         </button>
-                         <p className="text-[8px] font-black text-center text-gray-300 uppercase tracking-[0.2em] mt-4 italic">Direkomendasikan melakukan backup mingguan</p>
-                      </div>
-
-                      <div className="bg-gray-50/50 p-6 rounded-3xl border border-dashed border-gray-200 flex flex-col items-center justify-center text-center">
-                         <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-rose-500 mb-3 border border-rose-100 shadow-sm hover:bg-rose-50 transition-all cursor-pointer">
-                            <CloudUpload size={24} />
-                         </button>
-                         <input type="file" ref={fileInputRef} onChange={restoreData} accept=".json" className="hidden" />
-                         <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Restorasi Data</h4>
-                         <p className="text-[9px] font-bold text-gray-300 uppercase tracking-tighter mt-1 px-4 leading-relaxed">Klik untuk memilih file backup JSON dan mengembalikan data sistem.</p>
-                      </div>
-                    </div>
-                 </div>
-               )}
-            </div>
-          )}
-
-
-
-          {activeTab === 'rekap' && (
-            <AttendanceRecapTable 
-              students={students} 
-              attendance={attendance} 
-              classes={classes}
-              showClassFilter={true}
-            />
-          )}
-
-          {activeTab === 'rekapSemester' && (
-            <SemesterAttendanceRecapTable
-              students={students}
-              attendance={attendance}
-              classes={classes}
-              showClassFilter={true}
-            />
-          )}
-
-          {activeTab === 'attendance-individual' && (
-            <IndividualAttendance
-              students={students}
-              attendance={attendance}
-              classes={classes}
-              onAttendanceChange={fetchData}
-            />
-          )}
-
-          {activeTab === 'weekly-recap' && (
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-               <WeeklyAttendanceRecap 
-                 attendance={attendance} 
-                 students={students} 
-               />
-            </div>
-          )}
 
           {activeTab === 'school' && (
             <SchoolDataSettings />
@@ -5310,28 +5824,32 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[800px]">
+                  <table className="w-full text-left border-collapse min-w-[800px] border border-gray-100 shadow-sm">
                     <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Kelas</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Total Siswa</th>
-                        <th className="px-6 py-3 text-xs font-bold text-green-700 uppercase border-r border-gray-200 text-center">Hadir</th>
-                        <th className="px-6 py-3 text-xs font-bold text-red-700 uppercase border-r border-gray-200 text-center">Sakit</th>
-                        <th className="px-6 py-3 text-xs font-bold text-yellow-700 uppercase border-r border-gray-200 text-center">Izin</th>
-                        <th className="px-6 py-3 text-xs font-bold text-purple-700 uppercase border-r border-gray-200 text-center">Dispensasi</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Alpa</th>
+                      <tr className="bg-gray-50/80 border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500">
+                        <th className="px-6 py-4">Kategori Kelas</th>
+                        <th className="px-6 py-4 text-center">Total Siswa</th>
+                        <th className="px-6 py-4 text-center text-emerald-700">Hadir</th>
+                        <th className="px-6 py-4 text-center text-red-700">Sakit</th>
+                        <th className="px-6 py-4 text-center text-yellow-700">Izin</th>
+                        <th className="px-6 py-4 text-center text-purple-700">Dispensasi</th>
+                        <th className="px-6 py-4 text-center text-gray-700">Alpa</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
+                    <tbody className="divide-y divide-gray-100/80">
                       {paginatedSummary.map((data, idx) => (
-                        <tr key={`summary-${data.className}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
-                          <td className="px-6 py-4 border-r border-gray-100 font-black text-gray-900">{data.className}</td>
-                          <td className="px-6 py-4 border-r border-gray-100 font-bold text-gray-700 text-center bg-gray-50/30">{data.total}</td>
-                          <td className="px-6 py-4 border-r border-gray-100 font-black text-green-600 text-center">{data.hadir}</td>
-                          <td className="px-6 py-4 border-r border-gray-100 font-black text-red-600 text-center">{data.sakit}</td>
-                          <td className="px-6 py-4 border-r border-gray-100 font-black text-yellow-600 text-center">{data.izin}</td>
-                          <td className="px-6 py-4 border-r border-gray-100 font-black text-purple-600 text-center">{data.dispensasi}</td>
-                          <td className="px-6 py-4 font-black text-gray-600 text-center bg-gray-50/30">{data.alpa}</td>
+                        <tr key={`summary-${data.className}-${idx}`} className="group hover:bg-gray-50/80 bg-white transition-all duration-200 text-sm">
+                          <td className="px-6 py-4">
+                              <span className="px-2.5 py-1 bg-gray-100/80 text-gray-700 rounded-lg text-xs font-bold uppercase tracking-wider border border-gray-200/50">
+                                  {data.className}
+                              </span>
+                          </td>
+                          <td className="px-6 py-4 font-bold text-gray-600 text-center tabular-nums">{data.total}</td>
+                          <td className="px-6 py-4 font-black text-emerald-600 text-center tabular-nums">{data.hadir}</td>
+                          <td className="px-6 py-4 font-black text-red-600 text-center tabular-nums">{data.sakit}</td>
+                          <td className="px-6 py-4 font-black text-yellow-600 text-center tabular-nums">{data.izin}</td>
+                          <td className="px-6 py-4 font-black text-purple-600 text-center tabular-nums">{data.dispensasi}</td>
+                          <td className="px-6 py-4 font-black text-gray-500 text-center tabular-nums">{data.alpa}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -5379,120 +5897,114 @@ export default function AdminDashboard() {
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[800px]">
+                  <table className="w-full text-left border-collapse min-w-[1000px] border border-gray-100 shadow-sm">
                     <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Peserta Didik</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Tanggal</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Jam Masuk</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Jenis / Alasan</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Nama Ortu / WA</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Dokumen Pendukung</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Koordinat</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200 text-center">Status</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase border-r border-gray-200">Alasan Status</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-700 uppercase text-center">Aksi</th>
+                      <tr className="bg-gray-50/80 border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500">
+                        <th className="px-6 py-4">Peserta Didik</th>
+                        <th className="px-6 py-4">Tanggal & Masuk</th>
+                        <th className="px-6 py-4 text-center">Jenis & Alasan</th>
+                        <th className="px-6 py-4">Informasi Orang Tua</th>
+                        <th className="px-6 py-4 text-center">Dokumen</th>
+                        <th className="px-6 py-4 text-center">Koordinat</th>
+                        <th className="px-6 py-4 text-center">Status</th>
+                        <th className="px-6 py-4 text-center">Aksi</th>
                       </tr>
                     </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-100/80">
                 {paginatedAttendanceDetail.length > 0 ? (
                   paginatedAttendanceDetail.map((a, idx) => (
-                    <tr key={`attendance-row-${a.id}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
-                      <td className="px-6 py-3 border-r border-gray-100">
-                         <p className="font-bold text-gray-900 text-sm">{a.studentName}</p>
-                         <p className="text-[10px] font-bold text-blue-600 uppercase">{a.className}</p>
+                    <tr key={`attendance-row-${a.id}-${idx}`} className="group hover:bg-gray-50/80 bg-white transition-all duration-200">
+                      <td className="px-6 py-4">
+                         <p className="font-bold text-gray-900 text-sm group-hover:text-indigo-600 transition-colors">{a.studentName}</p>
+                         <p className="text-[10px] font-black text-blue-600 uppercase mt-0.5 tracking-widest">{a.className}</p>
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100">
-                        <p className="text-sm font-medium text-gray-700">
+                      <td className="px-6 py-4">
+                        <p className="text-xs font-bold text-gray-700">
                           {a.date ? formatDate(new Date(a.date)) : '-'}
                         </p>
-                      </td>
-                      <td className="px-6 py-3 border-r border-gray-100">
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">
-                          {a.submittedAt ? (a.submittedAt.toDate ? a.submittedAt.toDate().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-') : '-'}
+                        <p className="text-[10px] text-gray-500 font-bold mt-0.5">
+                          {a.submittedAt ? (a.submittedAt.toDate ? a.submittedAt.toDate().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-') : '-'} PST
                         </p>
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100">
-                         <span className={cn(
-                           "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-                           a.type === 'Sakit' ? "bg-red-100 text-red-600" :
-                           a.type === 'Izin' ? "bg-yellow-100 text-yellow-600" : 
-                           a.type === 'Alpa' ? "bg-gray-100 text-gray-600" : "bg-purple-100 text-purple-600"
-                         )}>
-                           {a.type}
-                         </span>
-                         <p className="text-[11px] text-gray-500 mt-1 italic">"{a.reason || 'Tidak ada alasan'}"</p>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span className={cn(
+                            "px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ring-1 shadow-sm w-fit",
+                            a.type === 'Sakit' ? "bg-red-50 text-red-600 ring-red-400/20" :
+                            a.type === 'Izin' ? "bg-yellow-50 text-yellow-600 ring-yellow-400/20" : 
+                            a.type === 'Alpa' ? "bg-gray-50 text-gray-600 ring-gray-400/20" : "bg-purple-50 text-purple-600 ring-purple-400/20"
+                          )}>
+                            {a.type}
+                          </span>
+                          <p className="text-[10px] text-gray-400 italic max-w-[150px] truncate text-center" title={a.reason}>"{a.reason || 'Tidak ada alasan'}"</p>
+                        </div>
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100">
+                      <td className="px-6 py-4">
                          <p className="font-bold text-gray-800 text-xs">{a.parentName}</p>
-                         <p className="text-[10px] text-green-600 font-bold">{a.parentPhone}</p>
+                         <p className="text-[10px] text-emerald-600 font-black mt-0.5">{a.parentPhone}</p>
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100 text-center">
+                      <td className="px-6 py-4 text-center">
                         {a.documentUrl ? (
-                           <div className="flex flex-col gap-1 items-center">
+                           <div className="flex flex-col gap-1 items-center justify-center">
                              <button 
                                onClick={() => window.open(a.documentUrl, '_blank')}
-                               className="w-full px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-bold border border-blue-100 hover:bg-blue-100 transition-all flex items-center justify-center gap-1"
+                               className="w-full px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-bold ring-1 ring-blue-500/20 hover:bg-blue-100 transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
                              >
-                               <FileText size={12} /> LIHAT
-                             </button>
-                             <button 
-                               onClick={() => downloadDocument(a.documentUrl, a.studentName, a.date, a.type)}
-                               className="w-full px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[9px] font-bold border border-emerald-100 hover:bg-emerald-100 transition-all flex items-center justify-center gap-1"
-                             >
-                               <Download size={12} /> UNDUH
+                               <FileText size={12} strokeWidth={2.5} /> LIHAT
                              </button>
                            </div>
                          ) : (
-                           <span className="text-[10px] text-gray-400 italic">Tidak ada dokumen</span>
+                           <span className="text-[10px] text-gray-300 font-bold italic tracking-widest">KOSONG</span>
                          )}
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100 text-center">
+                      <td className="px-6 py-4 text-center">
                         {a.location ? (
-                          <a href={`https://www.google.com/maps?q=${a.location.latitude},${a.location.longitude}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline flex items-center justify-center gap-1 text-[10px]">
-                             <MapPin size={12} /> Peta
-                          </a>
-                        ) : '-'}
+                          <div className="flex justify-center">
+                            <a href={`https://www.google.com/maps?q=${a.location.latitude},${a.location.longitude}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[10px] font-bold bg-amber-50 text-amber-600 px-2.5 py-1.5 rounded-lg hover:bg-amber-100 transition-all ring-1 ring-amber-500/20 whitespace-nowrap">
+                               <MapPin size={12} strokeWidth={2.5} /> BUKA PETA
+                            </a>
+                          </div>
+                        ) : <span className="text-[10px] text-gray-300 font-bold italic tracking-widest text-center block">KOSONG</span>}
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100 text-center">
-                         <span className={cn(
-                           "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                           a.status === 'Approved' ? "bg-green-100 text-green-700" : 
-                           a.status === 'Rejected' ? "bg-red-100 text-red-700" : 
-                           "bg-amber-100 text-amber-700 font-black animate-pulse"
-                         )}>
-                           {a.status === 'Approved' ? 'DITERIMA' : a.status === 'Rejected' ? 'DITOLAK' : 'PENDING'}
-                         </span>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span className={cn(
+                            "px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm ring-1",
+                            a.status === 'Approved' ? "bg-emerald-50 text-emerald-600 ring-emerald-500/20" : 
+                            a.status === 'Rejected' ? "bg-red-50 text-red-600 ring-red-500/20" : 
+                            "bg-amber-50 text-amber-600 ring-amber-500/20 animate-pulse"
+                          )}>
+                            {a.status === 'Approved' ? 'DITERIMA' : a.status === 'Rejected' ? 'DITOLAK' : 'PENDING'}
+                          </span>
+                          {a.statusReason && (
+                             <p className="text-[10px] text-gray-400 italic max-w-[100px] truncate text-center" title={a.statusReason}>{a.statusReason}</p>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-6 py-3 border-r border-gray-100">
-                         <p className="text-[11px] text-gray-600 italic">
-                           {a.statusReason || '-'}
-                         </p>
-                      </td>
-                      <td className="px-6 py-3 text-center">
+                      <td className="px-6 py-4">
                          <div className="flex flex-col items-center gap-2">
                             <div className="flex items-center justify-center gap-2">
                               {a.status === 'Pending' && (
                                 <>
                                   <button 
                                     onClick={() => handleStatusUpdate(a.id, 'Approved')}
-                                    className="p-1.5 bg-green-100 text-green-600 rounded-lg hover:bg-green-200 transition-colors"
+                                    className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 ring-1 ring-emerald-500/20 transition-all"
                                     title="Terima"
                                   >
-                                    <CheckCircle2 size={16} />
+                                    <CheckCircle2 size={16} strokeWidth={2.5} />
                                   </button>
                                   <button 
                                     onClick={() => handleStatusUpdate(a.id, 'Rejected')}
-                                    className="p-1.5 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors"
+                                    className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 ring-1 ring-red-500/20 transition-all"
                                     title="Tolak"
                                   >
-                                    <XCircle size={16} />
+                                    <XCircle size={16} strokeWidth={2.5} />
                                   </button>
                                 </>
                               )}
                               <button 
                                 onClick={() => handleDelete(a.id, 'attendance')}
-                                className="p-1.5 bg-gray-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors"
+                                className="p-1.5 bg-gray-50 text-red-500 rounded-lg hover:bg-red-50 ring-1 ring-gray-200 hover:ring-red-500/30 hover:text-red-600 transition-all"
                                 title="Hapus"
                               >
                                 <Trash2 size={16} />
@@ -5508,9 +6020,9 @@ export default function AdminDashboard() {
                                   link.click();
                                   document.body.removeChild(link);
                                 }}
-                                className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 hover:bg-blue-700 transition-all w-full mt-1 uppercase"
+                                className="px-3 py-1 bg-indigo-600 text-white rounded text-[9px] font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-700 transition-all w-full leading-none tracking-widest whitespace-nowrap"
                               >
-                                <Download size={14} /> Download Dokumen
+                                <Download size={10} strokeWidth={3} /> UNDUH DOKUMEN
                               </button>
                             )}
                          </div>
@@ -5519,7 +6031,7 @@ export default function AdminDashboard() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="px-6 py-20 text-center text-gray-400 italic">
+                    <td colSpan={8} className="px-6 py-12 text-center text-gray-400 font-medium italic bg-gray-50/50">
                       Tidak ada data ketidakhadiran yang sesuai filter.
                     </td>
                   </tr>
@@ -5656,7 +6168,8 @@ export default function AdminDashboard() {
               <div className="p-6 bg-blue-600 text-white flex items-center justify-between">
                  <h3 className="font-bold text-lg">
                     {formData.id ? 'Edit' : 'Atur Tampilan'} {
-                      activeTab === 'settings' ? 'Tahun Akademik' :
+                      activeTab === 'academic-years' ? 'Tahun Akademik' :
+                      activeTab === 'settings' ? (settingsSubTab === 'schools' ? 'Sekolah' : 'Pengaturan') :
                       activeTab === 'classes' ? 'Kelas' :
                       activeTab.slice(0, -1)
                     }
@@ -5664,7 +6177,7 @@ export default function AdminDashboard() {
                  <button onClick={() => setShowAddModal(false)}><X size={24} /></button>
               </div>
               <form onSubmit={handleAdd} className="p-6 space-y-4">
-                 {activeTab === 'settings' && (
+                 {(activeTab === 'academic-years' || (activeTab === 'settings' && settingsSubTab !== 'schools')) && (
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Tahun Akademik</label>
                       <input 
@@ -5675,6 +6188,54 @@ export default function AdminDashboard() {
                         value={formData.year || ''}
                         onChange={e => setFormData({...formData, year: e.target.value})} 
                       />
+                    </div>
+                 )}
+                 {activeTab === 'settings' && settingsSubTab === 'schools' && (
+                    <div className="space-y-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Nama Sekolah</label>
+                          <input 
+                            type="text" 
+                            placeholder="Contoh: SMP Negeri 1" 
+                            required 
+                            className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" 
+                            value={formData.name || ''}
+                            onChange={e => setFormData({...formData, name: e.target.value})} 
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Kode Sekolah</label>
+                          <input 
+                            type="text" 
+                            placeholder="Contoh: SMPN1" 
+                            required 
+                            disabled={!formData.isNew && !!formData.id}
+                            className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" 
+                            value={formData.id || ''}
+                            onChange={e => setFormData({...formData, id: e.target.value})}
+                            maxLength={20}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Admin Email</label>
+                          <input 
+                            type="email" 
+                            placeholder="Contoh: admin@sekolah.sch.id" 
+                            className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" 
+                            value={formData.adminEmail || ''}
+                            onChange={e => setFormData({...formData, adminEmail: e.target.value})} 
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Keterangan</label>
+                          <input 
+                            type="text" 
+                            placeholder="Contoh: Sekolah unggulan" 
+                            className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" 
+                            value={formData.description || ''}
+                            onChange={e => setFormData({...formData, description: e.target.value})} 
+                          />
+                        </div>
                     </div>
                  )}
                   {activeTab === 'students' && (
@@ -6010,7 +6571,7 @@ export default function AdminDashboard() {
             </div>
             <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-center">
               <div className="flex gap-2 items-center text-[10px] text-gray-400 font-medium">
-                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></div>
+                <div className="w-1 h-1 bg-blue-500 rounded-full animate-ping"></div>
                 DATABASE CLOUD SEDANG DIPERBARUI
               </div>
             </div>

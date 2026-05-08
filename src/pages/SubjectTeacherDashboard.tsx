@@ -47,6 +47,7 @@ import * as XLSX from 'xlsx';
 
 import SubjectAttendanceRecapTable from '../components/SubjectAttendanceRecapTable';
 import SubjectAttendanceSemesterRecap from '../components/SubjectAttendanceSemesterRecap';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function SubjectTeacherDashboard() {
   const { user } = useAuthStore();
@@ -100,7 +101,7 @@ export default function SubjectTeacherDashboard() {
   const handleReply = async (id: string, response: string) => {
     try {
       const inq = inquiries.find(i => i.id === id);
-      await updateDoc(doc(db, 'subjectInquiries', id), {
+      await updateDoc(getTenantDoc('subjectInquiries', id), {
         response,
         respondedBy: user?.name,
         respondedAt: serverTimestamp(),
@@ -108,7 +109,7 @@ export default function SubjectTeacherDashboard() {
       });
 
       if (inq) {
-        await addDoc(collection(db, 'notifications'), {
+        await addDoc(getTenantCollection('notifications'), {
           studentId: inq.studentId,
           targetRole: 'PARENT',
           title: '💬 Jawaban Tanya Baru',
@@ -128,7 +129,7 @@ export default function SubjectTeacherDashboard() {
     if (activeTab === 'inquiry' && unreadNotifications.length > 0) {
       unreadNotifications.forEach(async (n) => {
         try {
-          await updateDoc(doc(db, 'notifications', n.id), { read: true });
+          await updateDoc(getTenantDoc('notifications', n.id), { read: true });
         } catch (err) {
           console.error("Error marking notification as read:", err);
         }
@@ -138,7 +139,7 @@ export default function SubjectTeacherDashboard() {
 
   const handleUpdateHistoryNotes = async (id: string, notes: string) => {
     try {
-      await updateDoc(doc(db, 'subjectAttendance', id), {
+      await updateDoc(getTenantDoc('subjectAttendance', id), {
         notes: notes
       });
     } catch (err: any) {
@@ -159,7 +160,7 @@ export default function SubjectTeacherDashboard() {
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const q = query(collection(db, 'classes'), orderBy('name', 'asc'));
+        const q = query(getTenantCollection('classes'), orderBy('name', 'asc'));
         const snapshot = await getDocs(q);
         setClasses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SchoolClass)));
       } catch (err: any) {
@@ -172,7 +173,7 @@ export default function SubjectTeacherDashboard() {
     
     // Listen to inquiries
     const qInq = query(
-      collection(db, 'subjectInquiries'),
+      getTenantCollection('subjectInquiries'),
       where('subjectTeacherName', '==', user?.name || ''),
       orderBy('createdAt', 'desc')
     );
@@ -185,7 +186,7 @@ export default function SubjectTeacherDashboard() {
 
     // Listen to subject attendance logs
     const qAtt = query(
-      collection(db, 'subjectAttendance'),
+      getTenantCollection('subjectAttendance'),
       where('teacherName', '==', user?.name || ''),
       orderBy('createdAt', 'desc')
     );
@@ -198,7 +199,7 @@ export default function SubjectTeacherDashboard() {
 
     // Listen to notifications
     const qNotif = query(
-      collection(db, 'notifications'),
+      getTenantCollection('notifications'),
       where('targetUserId', '==', user?.uid || ''),
       orderBy('createdAt', 'desc')
     );
@@ -220,7 +221,7 @@ export default function SubjectTeacherDashboard() {
       const fetchStudents = async () => {
         setLoading(true);
         try {
-          const q = query(collection(db, 'students'), where('className', '==', selectedClass), orderBy('name', 'asc'));
+          const q = query(getTenantCollection('students'), where('className', '==', selectedClass), orderBy('name', 'asc'));
           const snapshot = await getDocs(q);
           const studentList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
           setStudents(studentList);
@@ -301,14 +302,15 @@ export default function SubjectTeacherDashboard() {
             period,
             status: data.status,
             notes: data.notes || '',
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
+            processedById: user?.uid || null
           };
 
-          const attRef = doc(collection(db, 'subjectAttendance'));
+          const attRef = getTenantDoc('subjectAttendance');
           batch.set(attRef, attendanceEntry);
 
           if (data.status === 'A') {
-            const notifRef = doc(collection(db, 'notifications'));
+            const notifRef = getTenantDoc('notifications');
             batch.set(notifRef, {
               targetRole: 'ADMIN',
               className: selectedClass,
@@ -361,13 +363,15 @@ export default function SubjectTeacherDashboard() {
         period,
         status: 'Menunggu',
         message: message,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        processedBy: user?.name,
+        processedById: user?.uid
       };
 
-      await addDoc(collection(db, 'subjectInquiries'), inquiryData);
+      await addDoc(getTenantCollection('subjectInquiries'), inquiryData);
       
       // Also notify Wali Kelas via notifications collection
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(getTenantCollection('notifications'), {
         targetRole: 'TEACHER',
         className: selectedClass,
         studentName: selectedStudent.name,
@@ -621,10 +625,27 @@ export default function SubjectTeacherDashboard() {
         </div>
       )}
       {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">INPUT GURU MAPEL</h1>
-          <p className="text-sm text-gray-500 font-medium tracking-tight font-sans uppercase text-[10px]">Kelola absensi siswa di kelas Anda sesuai jam pelajaran.</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-5">
+           <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-indigo-100">
+              <CheckCircle2 size={32} />
+           </div>
+           <div>
+              <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none uppercase">Selamat Datang, {user?.name}</h1>
+              <div className="flex flex-col gap-2 mt-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 bg-green-50 px-2.5 py-1 rounded-full border border-green-100">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">Online</span>
+                  </div>
+                  <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                  <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">Guru Mata Pelajaran</p>
+                </div>
+                <p className="text-sm text-gray-500 font-medium leading-tight">
+                  Pantau kehadiran dan kelola administrasi presensi siswa pada jam pelajaran Anda.
+                </p>
+              </div>
+           </div>
         </div>
       </div>
 

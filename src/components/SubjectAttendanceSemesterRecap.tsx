@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { formatDate } from '../lib/utils';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 interface SubjectAttendanceSemesterRecapProps {
   students: Student[];
@@ -30,10 +31,10 @@ export default function SubjectAttendanceSemesterRecap({
   useEffect(() => {
     async function fetchData() {
       try {
-        const schoolSnap = await getDocs(query(collection(db, 'schoolData'), limit(1)));
+        const schoolSnap = await getDocs(query(getTenantCollection('schoolData'), limit(1)));
         if (!schoolSnap.empty) setSchoolData(schoolSnap.docs[0].data() as SchoolData);
 
-        const yearSnap = await getDocs(query(collection(db, 'academicYears'), limit(1)));
+        const yearSnap = await getDocs(query(getTenantCollection('academicYears'), limit(1)));
         if (!yearSnap.empty) {
           const activeYear = yearSnap.docs.find(d => d.data().active)?.data() as AcademicYear;
           if (activeYear) setAcademicYear(activeYear.year);

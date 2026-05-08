@@ -1,14 +1,16 @@
 {
-  "name": "react-example",
+  "name": "siap-school-presence",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "node dist/server.js",
-    "build": "vite build && esbuild server.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/server.js",
+    "start": "tsx server.ts",
+    "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

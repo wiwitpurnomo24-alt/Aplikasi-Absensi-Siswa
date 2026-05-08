@@ -21,7 +21,8 @@ import {
   MessageSquare,
   Bell,
   BellRing,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { db, auth, handleFirestoreError, storage } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -39,7 +40,9 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { formatDate, getDayName, cn } from '../lib/utils';
+import { ParentAttendanceReport } from '../components/ParentAttendanceReport';
 import { AttendanceRecord, Student } from '../types';
+import { getTenantCollection, getTenantDoc, getSchoolCode } from '../lib/tenant';
 
 export default function ParentDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -50,6 +53,7 @@ export default function ParentDashboard() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
   const [success, setSuccess] = useState(false);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [documentBase64, setDocumentBase64] = useState<string | null>(null);
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [teacherName, setTeacherName] = useState<string>('');
@@ -57,10 +61,67 @@ export default function ParentDashboard() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<AttendanceRecord | null>(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
 
-  const { register, handleSubmit, setValue, watch, reset, formState: { errors } } = useForm({
+  const compressImage = async (file: File | Blob, fileName: string): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Limit dimensions while maintaining aspect ratio
+          const maxDimension = 1600;
+          if (width > height) {
+            if (width > maxDimension) {
+              height *= maxDimension / width;
+              width = maxDimension;
+            }
+          } else {
+            if (height > maxDimension) {
+              width *= maxDimension / height;
+              height = maxDimension;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          let quality = 0.8;
+          const targetSize = 500 * 1024; // 500 KB
+
+          const attemptCompression = (q: number) => {
+            canvas.toBlob((blob) => {
+              if (blob) {
+                if (blob.size > targetSize && q > 0.1) {
+                  attemptCompression(q - 0.1);
+                } else {
+                  resolve(new File([blob], fileName, { type: 'image/jpeg', lastModified: Date.now() }));
+                }
+              } else {
+                reject(new Error('Gagal memproses gambar'));
+              }
+            }, 'image/jpeg', q);
+          };
+
+          attemptCompression(quality);
+        };
+        img.onerror = () => reject(new Error('Gagal memuat gambar'));
+      };
+      reader.onerror = () => reject(new Error('Gagal membaca file'));
+    });
+  };
+
+  const { register, handleSubmit, setValue, watch, reset, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
       date: new Date().toISOString().split('T')[0],
       day: getDayName(new Date()),
@@ -94,7 +155,7 @@ export default function ParentDashboard() {
         
         // Fetch student data based on NIS
         if (user.nis) {
-          const q = query(collection(db, 'students'), where('nis', '==', user.nis));
+          const q = query(getTenantCollection('students'), where('nis', '==', user.nis));
           const snapshot = await getDocs(q);
           if (!snapshot.empty) {
             const studentData = snapshot.docs[0].data() as Student;
@@ -102,7 +163,7 @@ export default function ParentDashboard() {
             setStudent(studentData);
 
             if (studentData.className) {
-                const teacherQ = query(collection(db, 'teachers'), where('className', '==', studentData.className));
+                const teacherQ = query(getTenantCollection('teachers'), where('className', '==', studentData.className));
                 const teacherSnap = await getDocs(teacherQ);
                 if (!teacherSnap.empty) {
                     const tData = teacherSnap.docs[0].data();
@@ -114,7 +175,7 @@ export default function ParentDashboard() {
             // Fetch attendance history in real-time
             if (studentData.id) {
               const histQ = query(
-                collection(db, 'attendance'), 
+                getTenantCollection('attendance'), 
                 where('studentId', '==', studentData.id),
                 orderBy('submittedAt', 'desc')
               );
@@ -124,7 +185,7 @@ export default function ParentDashboard() {
               }, (error) => handleFirestoreError(error, 'list', 'attendance_history'));
 
               const notifQ = query(
-                collection(db, 'notifications'),
+                getTenantCollection('notifications'),
                 where('studentId', '==', studentData.id),
                 orderBy('createdAt', 'desc')
               );
@@ -183,55 +244,56 @@ export default function ParentDashboard() {
         return;
       }
 
-      let lastRefId = '';
-      for (const dateItem of dates) {
-        const dateObj = new Date(dateItem);
-        const dayItem = getDayName(dateObj);
+      let uploadedUrl = documentBase64;
+      if (documentFile) {
+         try {
+            const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
+            const { storage } = await import('../lib/firebase');
+            
+            const fileExtension = documentFile.name.split('.').pop();
+            const fileName = `attendance_docs/${student.id}/${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExtension}`;
+            const storageRef = ref(storage, fileName);
+            
+            await uploadBytes(storageRef, documentFile);
+            uploadedUrl = await getDownloadURL(storageRef);
+         } catch (err) {
+            console.error("Error uploading file:", err);
+            alert("Gagal mengunggah dokumen. Silahkan coba lagi.");
+            return;
+         }
+      }
 
-        const attendanceRef = await addDoc(collection(db, 'attendance'), {
-          ...data,
-          date: dateItem,
-          day: dayItem,
-          documentUrl: documentBase64,
+      // Submit through Automatic API (handles Firestore + WA Notifications)
+      const response = await fetch('/api/attendance/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: getSchoolCode(),
           studentId: student.id,
           studentName: student.name,
           className: student.className,
-          status: 'Pending',
-          statusReason: '',
-          location: location ? { latitude: location.lat, longitude: location.lng } : null,
-          submittedAt: serverTimestamp()
-        });
-        lastRefId = attendanceRef.id;
+          dates,
+          type: data.type,
+          reason: data.reason,
+          parentName: data.parentName,
+          parentPhone: data.parentPhone,
+          address: data.address,
+          additionalInfo: data.additionalInfo,
+          documentUrl: uploadedUrl,
+          location: location ? { latitude: location.lat, longitude: location.lng } : null
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Gagal mengirim pengajuan absensi");
       }
       
       const dateString = dates.length > 1 
         ? `${formatDate(new Date(dates[0]))} s/d ${formatDate(new Date(dates[dates.length - 1]))}`
         : formatDate(new Date(dates[0]));
 
-      // Notify Teacher in Firestore
-      await addDoc(collection(db, 'notifications'), {
-        targetRole: 'TEACHER',
-        className: student.className,
-        studentName: student.name,
-        attendanceId: lastRefId,
-        title: 'Pengajuan Izin Baru',
-        message: `${student.name} (${student.className}) mengajukan izin ${data.type} karena ${data.reason} untuk tanggal ${dateString}`,
-        read: false,
-        createdAt: serverTimestamp()
-      });
-
-      // Also Notify Admin for monitoring
-      await addDoc(collection(db, 'notifications'), {
-        targetRole: 'ADMIN',
-        studentName: student.name,
-        className: student.className,
-        title: 'Pengajuan Izin Baru (Admin)',
-        message: `${student.name} (${student.className}) mengajukan izin ${data.type} untuk ${dates.length} hari (${dateString}).`,
-        read: false,
-        createdAt: serverTimestamp()
-      });
-
-      // Prepare WhatsApp message
+      // Prepare WhatsApp manual message as secondary action
       const waMessage = `*ABSENSI SISWA - SMPN 2 MAGELANG*\n\n` +
         `Tanggal: ${dateString}\n` +
         `Nama Siswa: ${student.name}\n` +
@@ -251,7 +313,7 @@ export default function ParentDashboard() {
       let waUrl = `https://wa.me/?text=${encodeURIComponent(waMessage)}`;
       
       if (student.className) {
-        const teacherQ = query(collection(db, 'teachers'), where('className', '==', student.className));
+        const teacherQ = query(getTenantCollection('teachers'), where('className', '==', student.className));
         const teacherSnap = await getDocs(teacherQ);
         
         if (!teacherSnap.empty) {
@@ -280,7 +342,7 @@ export default function ParentDashboard() {
       // Refresh history
       if (student.id) {
         const histQ = query(
-          collection(db, 'attendance'), 
+          getTenantCollection('attendance'), 
           where('studentId', '==', student.id),
           orderBy('submittedAt', 'desc')
         );
@@ -299,27 +361,35 @@ export default function ParentDashboard() {
   return (
     <div className="space-y-6">
       {/* View Switcher Header */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 relative">
-            <User size={24} />
-            {notifications.filter(n => !n.read).length > 0 && (
-              <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
-            )}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-5">
+          <div className="w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-white relative shadow-xl shadow-blue-100">
+            <User size={32} />
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full border-4 border-white"></div>
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900">{student?.name || 'Siswa'}</h2>
-            <p className="text-xs text-gray-400 font-medium uppercase tracking-widest">{student?.className || '-'}</p>
+            <h2 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase">Selamat Datang, Orang Tua {student?.name}</h2>
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-green-50 px-2.5 py-1 rounded-full border border-green-100 shadow-sm">
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">Online</span>
+                </div>
+                <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{student?.className || '-'}</p>
+              </div>
+              <p className="text-xs text-gray-500 font-medium">Akses informasi kehadiran dan perkembangan administrasi presensi anak Anda.</p>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Notification dropdown can be added here, for now just show a simple indicator */}
-          {notifications.length > 0 && (
-            <div className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-full font-bold">
+          {notifications.filter(n => !n.read).length > 0 && (
+            <div className="text-[10px] bg-red-100 text-red-700 px-3 py-1 rounded-full font-black uppercase tracking-widest animate-pulse">
               {notifications.filter(n => !n.read).length} Notifikasi Baru
             </div>
           )}
-          <div className="flex bg-gray-100 p-1 rounded-xl">
+          <div className="flex bg-gray-100 p-1.5 rounded-2xl border border-gray-100">
              <button 
               type="button"
               onClick={() => setSearchParams({ view: 'form' })}
@@ -339,6 +409,16 @@ export default function ParentDashboard() {
               )}
              >
                RIWAYAT ABSENSI
+             </button>
+             <button 
+              type="button"
+              onClick={() => setSearchParams({ view: 'report' })}
+              className={cn(
+                "px-6 py-2 rounded-lg text-xs font-bold transition-all",
+                view === 'report' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+              )}
+             >
+               LAPORAN
              </button>
              <button 
               type="button"
@@ -363,6 +443,12 @@ export default function ParentDashboard() {
         "grid grid-cols-1 gap-8",
         view === 'form' ? "lg:grid-cols-2" : "lg:grid-cols-1"
       )}>
+        {view === 'report' && student && (
+          <div className="w-full">
+            <ParentAttendanceReport student={student} history={history} />
+          </div>
+        )}
+        
         {/* Form Section */}
         {view === 'form' && (
           <div className="space-y-6">
@@ -602,7 +688,8 @@ export default function ParentDashboard() {
                 </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Wajib melampirkan Dokumen (Surat Izin/ Surat Dokter/Surat DISPENSASI)</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Wajib melampirkan Dokumen (Surat Izin/ Surat Dokter/Surat DISPENSASI) - Maks 500 KB</label>
+                    <p className="text-[9px] text-orange-500 font-bold ml-1 mb-2 italic">* Dokumen bukti akan dihapus secara otomatis dari sistem pada akhir semester (akhir bulan Juni & Desember) untuk menghemat ruang penyimpanan.</p>
                     
                     {documentName || documentBase64 ? (
                       <div className="flex items-center justify-between w-full p-4 bg-blue-50 border border-blue-200 rounded-3xl">
@@ -623,6 +710,7 @@ export default function ParentDashboard() {
                             e.preventDefault();
                             setDocumentName(null);
                             setDocumentBase64(null);
+                            setDocumentFile(null);
                           }}
                           className="p-3 bg-white text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm border border-red-100"
                          >
@@ -631,8 +719,15 @@ export default function ParentDashboard() {
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-4">
-                        <label 
-                          htmlFor="document-upload"
+                      {isCompressing ? (
+                        <div className="col-span-2 py-8 flex flex-col items-center justify-center bg-blue-50 border border-blue-100 rounded-3xl animate-pulse">
+                           <RefreshCw className="animate-spin text-blue-600 mb-2" size={24} />
+                           <span className="text-[10px] font-black text-blue-700 uppercase tracking-[0.2em]">Mengompres File...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <label 
+                            htmlFor="document-upload"
                           className="flex flex-col items-center justify-center gap-2 p-4 bg-gray-50 border-2 border-dashed border-gray-200 rounded-3xl cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-all group"
                         >
                           <input 
@@ -640,24 +735,44 @@ export default function ParentDashboard() {
                             accept="image/jpeg,image/png,application/pdf"
                             className="hidden"
                             id="document-upload"
-                            onChange={(e) => {
+                            onChange={async (e) => {
                               const file = e.target.files?.[0];
                               if (file) {
-                                if (file.size > 500 * 1024) {
-                                  alert("File terlalu besar (Maks 500KB)");
-                                  e.target.value = '';
-                                  return;
-                                }
                                 const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
                                 if (!allowedTypes.includes(file.type)) {
                                     alert("Format file tidak didukung. Harap unggah gambar (JPG, PNG) atau PDF.");
                                     e.target.value = '';
                                     return;
                                 }
-                                setDocumentName(file.name);
-                                const reader = new FileReader();
-                                reader.onload = (ev) => setDocumentBase64(ev.target?.result as string);
-                                reader.readAsDataURL(file);
+
+                                if (file.type.startsWith('image/')) {
+                                  setIsCompressing(true);
+                                  try {
+                                    const compressed = await compressImage(file, file.name);
+                                    setDocumentName(compressed.name);
+                                    setDocumentFile(compressed);
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => setDocumentBase64(ev.target?.result as string);
+                                    reader.readAsDataURL(compressed);
+                                  } catch (err) {
+                                    console.error(err);
+                                    alert("Gagal memproses gambar");
+                                  } finally {
+                                    setIsCompressing(false);
+                                  }
+                                } else {
+                                  // PDF processing - only limit size as browser can't easily compress PDF
+                                  if (file.size > 500 * 1024) {
+                                    alert("File PDF terlalu besar (Maks 500 KB)");
+                                    e.target.value = '';
+                                    return;
+                                  }
+                                  setDocumentName(file.name);
+                                  setDocumentFile(file);
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => setDocumentBase64(ev.target?.result as string);
+                                  reader.readAsDataURL(file);
+                                }
                               }
                             }}
                           />
@@ -691,20 +806,33 @@ export default function ParentDashboard() {
                             <span className="block text-[9px] font-black text-gray-400 uppercase tracking-widest group-hover:text-blue-600">Ambil Foto</span>
                           </div>
                         </button>
-                      </div>
+                      </>
                     )}
-                </div>
+                  </div>
+                )}
+              </div>
 
                 <div className="pt-2">
                   <button 
                     type="submit"
-                    className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 active:scale-[0.98]"
+                    disabled={isSubmitting}
+                    className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 active:scale-[0.98] disabled:opacity-70 disabled:cursor-wait"
                   >
-                    <Send size={20} />
-                    Kirim & Kirim melalui WhatsApp
+                    {isSubmitting ? (
+                       <>
+                         <RefreshCw className="animate-spin" size={20} />
+                         Mengirim Data...
+                       </>
+                    ) : (
+                       <>
+                         <Send size={20} />
+                         Kirim Pengajuan Absensi
+                       </>
+                    )}
                   </button>
-                  <p className="mt-3 text-center text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                    *Data akan otomatis terbuka di aplikasi WhatsApp untuk verifikasi wali kelas
+                  <p className="mt-3 text-center text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
+                    * Notifikasi otomatis akan dikirim ke WhatsApp wali kelas.<br/>
+                    * Aplikasi WhatsApp akan terbuka sebagai cadangan verifikasi.
                   </p>
                 </div>
               </form>
@@ -842,7 +970,7 @@ export default function ParentDashboard() {
                     onClick={async () => {
                       // Mark all as read
                       for (const n of notifications.filter(notif => !notif.read)) {
-                        await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                        await updateDoc(getTenantDoc('notifications', n.id), { read: true });
                       }
                       setNotifications(prev => prev.map(p => ({...p, read: true})));
                     }}
@@ -868,7 +996,7 @@ export default function ParentDashboard() {
                         )}
                         onClick={async () => {
                           if (!n.read) {
-                            await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                            await updateDoc(getTenantDoc('notifications', n.id), { read: true });
                             setNotifications(prev => prev.map(notif => notif.id === n.id ? {...notif, read: true} : notif));
                           }
                         }}
@@ -1019,7 +1147,7 @@ export default function ParentDashboard() {
 
                 <div className="flex items-center gap-12">
                    <button 
-                    onClick={() => {
+                    onClick={async () => {
                       if (videoRef.current) {
                         const canvas = document.createElement('canvas');
                         canvas.width = videoRef.current.videoWidth;
@@ -1027,9 +1155,27 @@ export default function ParentDashboard() {
                         const ctx = canvas.getContext('2d');
                         if (ctx) {
                           ctx.drawImage(videoRef.current, 0, 0);
-                          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                          setDocumentBase64(dataUrl);
-                          setDocumentName(`Foto_${new Date().getTime()}.jpg`);
+                          
+                          // Convert to local blob for compression
+                          canvas.toBlob(async (blob) => {
+                             if (blob) {
+                               const filename = `Foto_${new Date().getTime()}.jpg`;
+                               setIsCompressing(true);
+                               try {
+                                 const compressed = await compressImage(blob, filename);
+                                 setDocumentFile(compressed);
+                                 setDocumentName(compressed.name);
+                                 const reader = new FileReader();
+                                 reader.onload = (ev) => setDocumentBase64(ev.target?.result as string);
+                                 reader.readAsDataURL(compressed);
+                               } catch (err) {
+                                 console.error(err);
+                                 alert("Gagal memproses foto");
+                               } finally {
+                                 setIsCompressing(false);
+                               }
+                             }
+                          }, 'image/jpeg', 0.9);
                           
                           // Close camera
                           cameraStream?.getTracks().forEach(track => track.stop());

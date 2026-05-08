@@ -9,7 +9,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email != null && (request.auth.token.email == "wiwitpurnomo24@guru.smp.belajar.id" || request.auth.token.email.endsWith("@admin.system"))) ||
+        (request.auth.token.email != null && (request.auth.token.email == "wiwitpurnomo24@guru.smp.belajar.id" || request.auth.token.email.matches(".*@admin\\.system"))) ||
         (request.auth.token.name != null && request.auth.token.name.matches("(?i).*administrator.*")) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "ADMIN")
@@ -23,6 +23,25 @@ service cloud.firestore {
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "TEACHER")
       );
     }
+
+    function isCounselor() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/counselors/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "COUNSELOR")
+      );
+    }
+
+    function isOfficer() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "PETUGAS_ABSEN_KELAS")
+      );
+    }
+
+    function isParent() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "PARENT")
+      );
+    }
     
     function incoming() {
       return request.resource.data;
@@ -34,71 +53,6 @@ service cloud.firestore {
 
     // --- Collections ---
 
-    match /schoolPresence/{id} {
-      allow get, list: if true;
-      allow write: if true;
-    }
-
-    match /systemSettings/{id} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /schoolConfig/{id} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /schoolData/{id} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /academicYears/{id} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /students/{studentId} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /teachers/{teacherId} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /counselors/{counselorId} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /classes/{classId} {
-      allow get, list: if true;
-      allow write: if isAdmin();
-    }
-
-    match /attendance/{attendanceId} {
-      allow get, list: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if isAdmin() || isTeacher();
-    }
-
-    match /attendance_alerts/{alertId} {
-      allow get, list: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if isAdmin();
-    }
-
-    match /notifications/{notifId} {
-      allow get, list: if true;
-      allow create, update: if true;
-      allow delete: if isAdmin();
-    }
-
     match /users/{userId} {
       allow get, list: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow create: if isSignedIn() && request.auth.uid == userId;
@@ -106,23 +60,6 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /grades/{id} {
-      allow get, list: if true;
-      allow write: if true;
-    }
-
-    match /subjectAttendance/{id} {
-      allow get, list, write: if true;
-    }
-
-    match /subjectInquiries/{id} {
-      allow get, list, write: if true;
-    }
-
-    match /student_pii/{studentId} {
-      allow read, write: if isAdmin();
-    }
-    
     match /admins/{userId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -130,6 +67,170 @@ service cloud.firestore {
 
     match /test/connection {
       allow read: if true;
+    }
+
+    // --- Root Legacy Collections (Restores data visibility) ---
+    match /schoolData/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /schoolConfig/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /academicYears/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /academicYear/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /systemSettings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /schoolPresence/{id} {
+      allow read: if true;
+      allow write: if isAdmin() || isTeacher() || isOfficer();
+    }
+    match /attendance_alerts/{alertId} {
+      allow read: if true;
+      allow create: if isAdmin() || isTeacher() || isCounselor() || isOfficer() || isSignedIn();
+      allow update: if isAdmin() || isTeacher() || isCounselor();
+      allow delete: if isAdmin();
+    }
+    match /students/{studentId} {
+      allow read: if true; 
+      allow write: if isAdmin() || isTeacher();
+    }
+    match /teachers/{teacherId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /counselors/{counselorId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /classes/{classId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /attendance/{attendanceId} {
+      allow read: if isSignedIn() && (isAdmin() || isTeacher() || isCounselor() || isOfficer() || (isParent() && resource.data.studentId == request.auth.uid));
+      allow create: if isSignedIn() || true; 
+      allow update: if isSignedIn() && (isAdmin() || isTeacher() || isCounselor() || isOfficer());
+      allow delete: if isAdmin() || isTeacher() || isCounselor();
+    }
+    match /notifications/{notifId} {
+      allow read: if isSignedIn();
+      allow create, update: if true; 
+      allow delete: if isAdmin();
+    }
+    match /grades/{id} {
+      allow read, write: if true;
+    }
+    match /subjectAttendance/{id} {
+      allow read, write: if true;
+    }
+    match /subjectInquiries/{id} {
+      allow read, write: if true;
+    }
+    match /student_pii/{studentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /schools {
+      allow list: if isSignedIn();
+    }
+    match /schools/{schoolId} {
+      allow read, write: if isSignedIn();
+      // Public / Metadata Collections - Allow unrestricted read
+      match /schoolData/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /schoolConfig/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /academicYears/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /academicYear/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /systemSettings/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /schoolPresence/{id} {
+        allow read: if true;
+        allow write: if isAdmin() || isTeacher() || isOfficer();
+      }
+
+      match /attendance_alerts/{alertId} {
+        allow read: if true;
+        allow create: if isAdmin() || isTeacher() || isCounselor() || isOfficer() || isSignedIn();
+        allow update: if isAdmin() || isTeacher() || isCounselor();
+        allow delete: if isAdmin();
+      }
+
+      match /students/{studentId} {
+        allow read: if true; 
+        allow write: if isAdmin() || isTeacher();
+      }
+
+      match /teachers/{teacherId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /counselors/{counselorId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /classes/{classId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /attendance/{attendanceId} {
+        allow read: if isSignedIn() && (isAdmin() || isTeacher() || isCounselor() || isOfficer() || (isParent() && resource.data.studentId == request.auth.uid));
+        allow create: if isSignedIn() || true; 
+        allow update: if isSignedIn() && (isAdmin() || isTeacher() || isCounselor() || isOfficer());
+        allow delete: if isAdmin() || isTeacher() || isCounselor();
+      }
+
+      match /notifications/{notifId} {
+        allow read: if isSignedIn();
+        allow create, update: if true; 
+        allow delete: if isAdmin();
+      }
+
+      match /grades/{id} {
+        allow read, write: if true;
+      }
+
+      match /subjectAttendance/{id} {
+        allow read, write: if true;
+      }
+
+      match /subjectInquiries/{id} {
+        allow read, write: if true;
+      }
+
+      match /student_pii/{studentId} {
+        allow read, write: if isAdmin();
+      }
     }
 
     // Default deny-all

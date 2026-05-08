@@ -46,6 +46,7 @@ import SimpleNotification from '../components/SimpleNotification';
 import IndividualAttendance from '../components/IndividualAttendance';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 import WeeklyAttendanceRecap from '../components/WeeklyAttendanceRecap';
+import { getTenantCollection, getTenantDoc, getSchoolCode } from '../lib/tenant';
 
 export default function TeacherDashboard() {
   const { user, login } = useAuthStore();
@@ -88,6 +89,62 @@ export default function TeacherDashboard() {
   const [showStudentDetailModal, setShowStudentDetailModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+
+  const compressImage = async (file: File | Blob, fileName: string): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          const maxDimension = 1600;
+          if (width > height) {
+            if (width > maxDimension) {
+              height *= maxDimension / width;
+              width = maxDimension;
+            }
+          } else {
+            if (height > maxDimension) {
+              width *= maxDimension / height;
+              height = maxDimension;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          let quality = 0.8;
+          const targetSize = 500 * 1024;
+
+          const attemptCompression = (q: number) => {
+            canvas.toBlob((blob) => {
+              if (blob) {
+                if (blob.size > targetSize && q > 0.1) {
+                  attemptCompression(q - 0.1);
+                } else {
+                  resolve(new File([blob], fileName, { type: 'image/jpeg', lastModified: Date.now() }));
+                }
+              } else {
+                reject(new Error('Gagal memproses gambar'));
+              }
+            }, 'image/jpeg', q);
+          };
+
+          attemptCompression(quality);
+        };
+        img.onerror = () => reject(new Error('Gagal memuat gambar'));
+      };
+      reader.onerror = () => reject(new Error('Gagal membaca file'));
+    });
+  };
 
   const printLoginCards = async () => {
     if (students.length === 0) {
@@ -177,13 +234,13 @@ export default function TeacherDashboard() {
     
     try {
       // 1. Prioritize official 'classes' collection explicitly assigned by Admin
-      const classQ = query(collection(db, 'classes'), where('waliKelasId', '==', user.uid));
+      const classQ = query(getTenantCollection('classes'), where('waliKelasId', '==', user.uid));
       const classSnap = await getDocs(classQ);
       if (!classSnap.empty) {
         effectiveClassName = classSnap.docs[0].data().name;
       } else {
         // 2. Fallback to teacher profile
-        const teacherDoc = await getDoc(doc(db, 'teachers', user.uid));
+        const teacherDoc = await getDoc(getTenantDoc('teachers', user.uid));
         if (teacherDoc.exists()) {
           const tData = teacherDoc.data();
           if (tData.className && tData.className !== '') {
@@ -211,12 +268,12 @@ export default function TeacherDashboard() {
       setClassName(effectiveClassName);
 
       // Fetch students first
-      let stdSnapshot = await getDocs(query(collection(db, 'students'), where('className', '==', effectiveClassName)));
+      let stdSnapshot = await getDocs(query(getTenantCollection('students'), where('className', '==', effectiveClassName)));
       let stdData = stdSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
       
       // Fallback: If no students found with exact className, fetch all and try manual matching
       if (stdData.length === 0) {
-        const allStudentsSnap = await getDocs(collection(db, 'students'));
+        const allStudentsSnap = await getDocs(getTenantCollection('students'));
         const allStudents = allStudentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
         const normalizedClassName = effectiveClassName.replace(/\s/g, '').toLowerCase();
         stdData = allStudents.filter(s => (s.className || '').replace(/\s/g, '').toLowerCase() === normalizedClassName);
@@ -233,14 +290,14 @@ export default function TeacherDashboard() {
       let attData: AttendanceRecord[] = [];
       try {
         const attSnapshot = await getDocs(query(
-          collection(db, 'attendance'), 
+          getTenantCollection('attendance'), 
           where('className', '==', effectiveClassName),
           orderBy('submittedAt', 'desc')
         ));
         attData = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
       } catch (err) {
         console.warn("Attendance orderBy failed, fetching without orderBy:", err);
-        const attSnapshot = await getDocs(query(collection(db, 'attendance'), where('className', '==', effectiveClassName)));
+        const attSnapshot = await getDocs(query(getTenantCollection('attendance'), where('className', '==', effectiveClassName)));
         attData = attSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord))
           .sort((a, b) => getTimeSafe(b.submittedAt) - getTimeSafe(a.submittedAt));
       }
@@ -275,7 +332,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!className || !user) return;
     const q = query(
-      collection(db, 'notifications'),
+      getTenantCollection('notifications'),
       where('targetRole', '==', 'TEACHER'),
       where('className', '==', className),
       orderBy('createdAt', 'desc')
@@ -290,7 +347,7 @@ export default function TeacherDashboard() {
     if (!className || !user) return;
 
     const q = query(
-      collection(db, 'attendance'),
+      getTenantCollection('attendance'),
       where('className', '==', className),
       orderBy('submittedAt', 'desc')
     );
@@ -318,7 +375,7 @@ export default function TeacherDashboard() {
     if (!className) return;
 
     const q = query(
-      collection(db, 'subjectInquiries'),
+      getTenantCollection('subjectInquiries'),
       where('className', '==', className),
       orderBy('createdAt', 'desc')
     );
@@ -349,7 +406,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!className || activeTab !== 'subject-attendance-report') return;
     const q = query(
-      collection(db, 'subjectAttendances'),
+      getTenantCollection('subjectAttendances'),
       where('className', '==', className)
     );
     getDocs(q).then(snapshot => {
@@ -370,7 +427,7 @@ export default function TeacherDashboard() {
     if (showAddModal) {
       const fetchClasses = async () => {
         try {
-          const csSnap = await getDocs(collection(db, 'classes'));
+          const csSnap = await getDocs(getTenantCollection('classes'));
           setAllClasses(csSnap.docs.map(d => ({id: d.id, ...d.data()}) as any));
         } catch(e) {
           console.error(e);
@@ -384,7 +441,7 @@ export default function TeacherDashboard() {
     if (showAddModal && addFormClass) {
       const fetchStudents = async () => {
         try {
-          const stdQ = query(collection(db, 'students'), where('className', '==', addFormClass));
+          const stdQ = query(getTenantCollection('students'), where('className', '==', addFormClass));
           const stdSnap = await getDocs(stdQ);
           setManualStudents(stdSnap.docs.map(d => ({id: d.id, ...d.data()}) as Student));
         } catch(e) {
@@ -409,7 +466,7 @@ export default function TeacherDashboard() {
   };
 
   const markNotificationAsRead = async (id: string) => {
-    await updateDoc(doc(db, 'notifications', id), { read: true });
+    await updateDoc(getTenantDoc('notifications', id), { read: true });
   };
 
   useEffect(() => {
@@ -445,7 +502,7 @@ export default function TeacherDashboard() {
       // Check for duplicate
       const studentId = parsedWAData.matchedStudent?.id || 'unknown';
       const q = query(
-        collection(db, 'attendance'), 
+        getTenantCollection('attendance'), 
         where('studentId', '==', studentId),
         where('date', '==', parsedWAData.date)
       );
@@ -457,7 +514,7 @@ export default function TeacherDashboard() {
         
         // Delete existing if overwriting
         for (const d of existing.docs) {
-          await deleteDoc(doc(db, 'attendance', d.id));
+          await deleteDoc(getTenantDoc('attendance', d.id));
         }
       }
 
@@ -476,9 +533,11 @@ export default function TeacherDashboard() {
         status: 'Approved',
         source: 'WhatsApp',
         submittedAt: serverTimestamp(),
+        processedBy: user?.name || 'Teacher',
+        processedById: user?.uid || null
       };
 
-      await addDoc(collection(db, 'attendance'), payload);
+      await addDoc(getTenantCollection('attendance'), payload);
       setShowImportModal(false);
       setWaText('');
       setParsedWAData(null);
@@ -545,9 +604,11 @@ export default function TeacherDashboard() {
           documentUrl: documentUrl,
           documentName: selectedFile?.name || '',
           submittedAt: serverTimestamp(),
+          processedBy: user?.name || 'Teacher',
+          processedById: user?.uid || null
         };
 
-        await addDoc(collection(db, 'attendance'), payload);
+        await addDoc(getTenantCollection('attendance'), payload);
         
         // Early Warning Check
         checkAttendanceAlert(payload.studentId, payload.studentName, payload.className).catch(console.error);
@@ -573,7 +634,7 @@ export default function TeacherDashboard() {
     }
     
     try {
-      await addDoc(collection(db, 'subjectInquiries'), {
+      await addDoc(getTenantCollection('subjectInquiries'), {
         ...sendInquiryData,
         subjectName: (user as any)?.subject || 'Mata Pelajaran',
         subjectTeacherName: user?.name,
@@ -598,7 +659,7 @@ export default function TeacherDashboard() {
 
     // Create notification
     try {
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(getTenantCollection('notifications'), {
         studentId: studentId,
         targetRole: 'PARENT',
         title: newStatus === 'Approved' ? '✅ Izin Disetujui' : '❌ Izin Ditolak',
@@ -613,12 +674,31 @@ export default function TeacherDashboard() {
     }
 
     try {
-      await updateDoc(doc(db, 'attendance', id), { 
+      await updateDoc(getTenantDoc('attendance', id), { 
         status: newStatus,
         statusReason: reason,
         processedAt: serverTimestamp(),
         processedBy: user?.name || 'Teacher'
       });
+
+      // Send WhatsApp Notification to Parent
+      const record = attendance.find(a => a.id === id);
+      if (record && record.parentPhone) {
+        fetch('/api/attendance/notify-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: getSchoolCode(),
+            studentName: record.studentName,
+            type: record.type,
+            date: record.date,
+            status: newStatus,
+            statusReason: reason,
+            parentPhone: record.parentPhone
+          })
+        }).catch(err => console.error("WA Status Notification failed", err));
+      }
+      
       setAttendance(prev => prev.map(item => item.id === id ? { ...item, status: newStatus, statusReason: reason } : item));
       
       // Early Warning Check triggered on Approval
@@ -642,7 +722,7 @@ export default function TeacherDashboard() {
     showConfirm('Apakah Anda yakin ingin menghapus data siswa ini?', async () => {
       setLoading(true);
       try {
-        await deleteDoc(doc(db, 'students', id));
+        await deleteDoc(getTenantDoc('students', id));
         await fetchClassData();
         alert('Data siswa berhasil dihapus.');
       } catch (err) {
@@ -663,7 +743,7 @@ export default function TeacherDashboard() {
   const handleDeleteAttendance = (id: string) => {
     showConfirm('Apakah Anda yakin ingin menghapus absensi ini?', async () => {
       try {
-        await deleteDoc(doc(db, 'attendance', id));
+        await deleteDoc(getTenantDoc('attendance', id));
         setAttendance(prev => prev.filter(item => item.id !== id));
         alert('Kehadiran berhasil dihapus.');
       } catch (error: any) {
@@ -829,7 +909,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      await addDoc(collection(db, 'students'), {
+      await addDoc(getTenantCollection('students'), {
         ...addStudentFormData,
         className: className,
         createdAt: serverTimestamp(),
@@ -846,7 +926,7 @@ export default function TeacherDashboard() {
   const handleResponseInquiry = async () => {
     if (!selectedInquiry || !inquiryResponse) return;
     try {
-      await updateDoc(doc(db, 'subjectInquiries', selectedInquiry.id), {
+      await updateDoc(getTenantDoc('subjectInquiries', selectedInquiry.id), {
         replies: arrayUnion({
           message: inquiryResponse,
           sender: user?.name,
@@ -860,7 +940,7 @@ export default function TeacherDashboard() {
 
       // Notify Subject Teacher
       if (selectedInquiry.subjectTeacherId || selectedInquiry.subjectTeacherName) {
-        await addDoc(collection(db, 'notifications'), {
+        await addDoc(getTenantCollection('notifications'), {
           targetUserId: selectedInquiry.subjectTeacherId || '',
           targetTeacherName: selectedInquiry.subjectTeacherName || '',
           title: 'Jawaban Tanya Wali Kelas',
@@ -967,8 +1047,19 @@ export default function TeacherDashboard() {
             <Users size={28} />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tighter leading-none">Wali Kelas {className}</h1>
-            <p className="text-[10px] font-bold text-gray-400 font-sans uppercase tracking-widest mt-1">{user?.name}</p>
+            <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tighter leading-none">Selamat Datang, {user?.name}</h1>
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-green-50 px-2 py-0.5 rounded-full border border-green-100 shadow-sm">
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-[9px] font-black text-green-700 uppercase tracking-widest">Online</span>
+                </div>
+                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Wali Kelas {className}</p>
+                <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Guru Pengampu</p>
+              </div>
+              <p className="text-xs text-gray-500 font-medium italic">"Kelola kehadiran dan pantau kemajuan siswa kelas {className} dengan teliti."</p>
+            </div>
           </div>
         </div>
 
@@ -1295,7 +1386,7 @@ export default function TeacherDashboard() {
                           const rowClass = String(row['Kelas'] || '').trim();
                           if (rowClass !== className) continue;
 
-                          await addDoc(collection(db, 'students'), {
+                          await addDoc(getTenantCollection('students'), {
                             name: row['Nama Lengkap'] || row['Nama'] || '',
                             nis: String(row['NIS'] || ''),
                             nisn: String(row['NISN'] || ''),
@@ -1766,7 +1857,7 @@ export default function TeacherDashboard() {
                 <button 
                   onClick={async () => {
                     for (const n of teacherNotifications.filter(notif => !notif.read)) {
-                      await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                      await updateDoc(getTenantDoc('notifications', n.id), { read: true });
                     }
                     setTeacherNotifications(prev => prev.map(p => ({...p, read: true})));
                   }}
@@ -1794,7 +1885,7 @@ export default function TeacherDashboard() {
                       )}
                       onClick={async () => {
                         if (!n.read) {
-                          await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                          await updateDoc(getTenantDoc('notifications', n.id), { read: true });
                           setTeacherNotifications(prev => prev.map(notif => notif.id === n.id ? {...notif, read: true} : notif));
                         }
                       }}
@@ -1985,7 +2076,7 @@ export default function TeacherDashboard() {
       )}
 
       {activeTab === 'attendance-individual' && (
-        <div className="mb-6">
+        <div className="mb-4">
           <IndividualAttendance
             students={students}
             attendance={attendance}
@@ -2242,13 +2333,53 @@ export default function TeacherDashboard() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Dok. Pendukung (PDF/IMG)</label>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">
+                    {isCompressing ? 'Sedang Mengompres...' : 'Dok. Pendukung (PDF/IMG)'}
+                  </label>
                   <input 
                     type="file" 
                     accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={e => setSelectedFile(e.target.files?.[0] || null)}
-                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs focus:ring-2 focus:ring-blue-600 outline-none"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) {
+                        setSelectedFile(null);
+                        return;
+                      }
+
+                      // Only compress if it's an image
+                      if (file.type.startsWith('image/')) {
+                        setIsCompressing(true);
+                        try {
+                          const compressed = await compressImage(file, file.name);
+                          setSelectedFile(compressed);
+                        } catch (err) {
+                          console.error(err);
+                          alert("Gagal memproses gambar");
+                          e.target.value = '';
+                          setSelectedFile(null);
+                        } finally {
+                          setIsCompressing(false);
+                        }
+                      } else {
+                        // For PDF, only limit size
+                        if (file.size > 500 * 1024) {
+                          alert("File PDF terlalu besar (Maks 500 KB)");
+                          e.target.value = '';
+                          setSelectedFile(null);
+                          return;
+                        }
+                        setSelectedFile(file);
+                      }
+                    }}
+                    className={cn(
+                      "w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs outline-none",
+                      isCompressing ? "opacity-50 cursor-not-allowed" : "focus:ring-2 focus:ring-blue-600"
+                    )}
+                    disabled={isCompressing}
                   />
+                  <p className="mt-1 text-[9px] text-gray-400 italic">
+                    * File gambar akan dikompres otomatis ke &lt; 500 KB.
+                  </p>
                 </div>
               </div>
               <div>

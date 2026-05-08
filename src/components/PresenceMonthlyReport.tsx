@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Student, SchoolData, AcademicYear } from '../types';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 interface PresenceMonthlyReportProps {
     students: Student[];
@@ -25,10 +26,10 @@ export default function PresenceMonthlyReport({ students, presence }: PresenceMo
     useEffect(() => {
         async function fetchData() {
             try {
-                const schoolSnap = await getDocs(query(collection(db, 'schoolData'), limit(1)));
+                const schoolSnap = await getDocs(query(getTenantCollection('schoolData'), limit(1)));
                 if (!schoolSnap.empty) setSchoolData(schoolSnap.docs[0].data() as SchoolData);
 
-                const yearSnap = await getDocs(collection(db, 'academicYears'));
+                const yearSnap = await getDocs(getTenantCollection('academicYears'));
                 const activeYear = yearSnap.docs.find(d => d.data().active)?.data() as AcademicYear;
                 if (activeYear) setAcademicYear(activeYear.year);
             } catch (error) {

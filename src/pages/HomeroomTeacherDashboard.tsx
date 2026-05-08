@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { useAuthStore } from '../lib/auth-store';
-import { MessageCircle, CheckCircle2, Clock, Calendar, FileText } from 'lucide-react';
+import { MessageCircle, CheckCircle2, Clock, Calendar, FileText, User } from 'lucide-react';
 import { handleFirestoreError } from '../lib/firebase';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 import RoleSwitcher from '../components/RoleSwitcher';
@@ -14,6 +14,7 @@ import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapT
 import { Student, AttendanceRecord } from '../types';
 import { cn } from '../lib/utils';
 import Loading from '../components/Loading';
+import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
 export default function HomeroomTeacherDashboard() {
   const { user } = useAuthStore();
@@ -30,7 +31,7 @@ export default function HomeroomTeacherDashboard() {
     if (!user || !user.className) return;
     
     const q = query(
-        collection(db, 'notifications'),
+        getTenantCollection('notifications'),
         where('className', '==', user.className),
         orderBy('createdAt', 'desc')
     );
@@ -52,7 +53,7 @@ export default function HomeroomTeacherDashboard() {
 
         if (!className) {
             // Try to find the class assigned to this teacher
-            const classQuery = query(collection(db, 'classes'), where('waliKelasId', '==', user?.uid));
+            const classQuery = query(getTenantCollection('classes'), where('waliKelasId', '==', user?.uid));
             const classSnap = await getDocs(classQuery);
             if (!classSnap.empty) {
                 className = classSnap.docs[0].data().name;
@@ -67,26 +68,26 @@ export default function HomeroomTeacherDashboard() {
         try {
             // Fetch inquiries
             const q = query(
-                collection(db, 'subjectInquiries'),
+                getTenantCollection('subjectInquiries'),
                 where('className', '==', className),
                 orderBy('createdAt', 'desc')
             );
             
             // Fetch students
             const stdQ = query(
-                collection(db, 'students'),
+                getTenantCollection('students'),
                 where('className', '==', className)
             );
 
             // Fetch school presence logs
             const presQuery = query(
-                collection(db, 'schoolPresence'),
+                getTenantCollection('schoolPresence'),
                 where('className', '==', className)
             );
 
             // Fetch absenteeism (attendance collection)
             const attQ = query(
-                collection(db, 'attendance'),
+                getTenantCollection('attendance'),
                 where('className', '==', className)
             );
 
@@ -112,7 +113,7 @@ export default function HomeroomTeacherDashboard() {
 
   const handleReply = async (id: string, response: string) => {
     try {
-      await updateDoc(doc(db, 'subjectInquiries', id), {
+      await updateDoc(getTenantDoc('subjectInquiries', id), {
         response,
         respondedBy: user?.name,
         respondedAt: serverTimestamp(),
@@ -129,10 +130,27 @@ export default function HomeroomTeacherDashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-         <div>
-            <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tight">Dashboard Wali Kelas</h2>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-widest">Kelas: {user?.className || 'N/A'}</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+         <div className="flex items-center gap-5">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-100">
+               <User size={32} />
+            </div>
+            <div>
+               <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tight leading-none">Selamat Datang, {user?.name}</h2>
+               <div className="flex flex-col gap-2 mt-2">
+                 <div className="flex items-center gap-3">
+                   <div className="flex items-center gap-1.5 bg-green-50 px-2.5 py-1 rounded-full border border-green-100">
+                     <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                     <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">Online</span>
+                   </div>
+                   <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                   <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Wali Kelas {user?.className || 'N/A'}</p>
+                 </div>
+                 <p className="text-sm text-gray-500 font-medium">
+                   Panel manajemen kehadiran dan pemantauan aktivitas siswa kelas {user?.className || 'N/A'}. 
+                 </p>
+               </div>
+            </div>
          </div>
          <RoleSwitcher />
       </div>
@@ -150,8 +168,8 @@ export default function HomeroomTeacherDashboard() {
         <button 
           onClick={() => setActiveTab('monitoring')}
           className={cn(
-            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
-            activeTab === 'monitoring' ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-400 hover:text-gray-600"
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 border-2",
+            activeTab === 'monitoring' ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200" : "border-blue-600 text-blue-600 hover:bg-blue-50"
           )}
         >
           <Clock size={16} /> Monitoring Harian
@@ -159,8 +177,8 @@ export default function HomeroomTeacherDashboard() {
         <button 
           onClick={() => setActiveTab('monthly')}
           className={cn(
-            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
-            activeTab === 'monthly' ? "bg-green-600 text-white shadow-md shadow-green-200" : "text-gray-400 hover:text-gray-600"
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 border-2",
+            activeTab === 'monthly' ? "bg-green-600 border-green-600 text-white shadow-md shadow-green-200" : "border-green-600 text-green-600 hover:bg-green-50"
           )}
         >
           <Calendar size={16} /> Laporan Bulanan
@@ -168,8 +186,8 @@ export default function HomeroomTeacherDashboard() {
         <button 
           onClick={() => setActiveTab('semester')}
           className={cn(
-            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
-            activeTab === 'semester' ? "bg-purple-600 text-white shadow-md shadow-purple-200" : "text-gray-400 hover:text-gray-600"
+            "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 border-2",
+            activeTab === 'semester' ? "bg-purple-600 border-purple-600 text-white shadow-md shadow-purple-200" : "border-purple-600 text-purple-600 hover:bg-purple-50"
           )}
         >
           <FileText size={16} /> Laporan Semester

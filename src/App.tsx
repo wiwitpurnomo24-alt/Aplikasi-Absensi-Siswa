@@ -11,6 +11,7 @@ import RoleGuard from './components/RoleGuard';
 
 // Lazy loading pages for better performance
 const Login = lazy(() => import('./pages/Login'));
+const UserGuide = lazy(() => import('./pages/UserGuide'));
 const ParentDashboard = lazy(() => import('./pages/ParentDashboard'));
 const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -24,6 +25,7 @@ export default function App() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/panduan" element={<UserGuide />} />
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/login" replace />} />
             <Route 
