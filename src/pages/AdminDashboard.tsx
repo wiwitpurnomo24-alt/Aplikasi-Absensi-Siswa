@@ -4089,10 +4089,10 @@ export default function AdminDashboard() {
                     }}
                     className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm"
                   >
-                    <Download size={14} /> TEMPLATE
+                    <Download size={14} /> TEMPLAT EXCEL
                   </button>
-                  <label className="px-3 py-2 bg-blue-50 text-blue-700 border border-blue-100 rounded text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-1 shadow-sm cursor-pointer">
-                    <Plus size={14} /> UPLOAD TEMPLATE
+                  <label className="px-3 py-2 bg-blue-600 text-white border border-blue-700 rounded text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shadow-md cursor-pointer">
+                    <CloudUpload size={14} /> IMPOR EXCEL
                     <input 
                       type="file" 
                       className="hidden" 
@@ -4114,8 +4114,20 @@ export default function AdminDashboard() {
                           }
 
                           setLoading(true);
-                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Wali Kelas' });
+                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Wali Kelas' });
                           try {
+                            const existingNips = new Set(teachers.map(t => t.nip).filter(Boolean));
+                            
+                            // Validation first
+                            for (const row of jsonData as any[]) {
+                              const nip = String(row['NIP'] || '');
+                              if (nip && existingNips.has(nip)) {
+                                throw new Error(`NIP ${nip} sudah terdaftar atau duplikat dalam list.`);
+                              }
+                              if (nip) existingNips.add(nip);
+                            }
+
+                            setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Wali Kelas' });
                             let count = 0;
                             for (const row of jsonData as any[]) {
                               const nip = String(row['NIP'] || '');
@@ -4134,14 +4146,15 @@ export default function AdminDashboard() {
                               count++;
                               setUploadProgress({ current: count, total: jsonData.length, label: 'Mengunggah Data Wali Kelas' });
                             }
-                            alert(`${jsonData.length} Wali Kelas berhasil diunggah!`);
                             fetchData();
-                          } catch (err) {
+                            alert(`${jsonData.length} Wali Kelas berhasil diunggah!`);
+                          } catch (err: any) {
                             console.error(err);
-                            alert('Gagal mengunggah data.');
+                            alert(`Gagal mengunggah data: ${err.message}`);
                           } finally {
                             setLoading(false);
                             setUploadProgress(null);
+                            e.target.value = '';
                           }
                         };
                         reader.readAsArrayBuffer(file);
@@ -4171,10 +4184,10 @@ export default function AdminDashboard() {
                     }}
                     className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm"
                   >
-                    <Download size={14} /> TEMPLATE
+                    <Download size={14} /> TEMPLAT EXCEL
                   </button>
-                  <label className="px-3 py-2 bg-blue-50 text-blue-700 border border-blue-100 rounded text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-1 shadow-sm cursor-pointer">
-                    <Plus size={14} /> UPLOAD TEMPLATE
+                  <label className="px-3 py-2 bg-blue-600 text-white border border-blue-700 rounded text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shadow-md cursor-pointer">
+                    <CloudUpload size={14} /> IMPOR EXCEL
                     <input 
                       type="file" 
                       className="hidden" 
@@ -4196,8 +4209,19 @@ export default function AdminDashboard() {
                           }
 
                           setLoading(true);
-                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Guru' });
+                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Guru' });
                           try {
+                            const existingNips = new Set(teachers.map(t => t.nip).filter(Boolean));
+                            
+                            for (const row of jsonData as any[]) {
+                              const nip = String(row['NIP'] || '');
+                              if (nip && existingNips.has(nip)) {
+                                throw new Error(`NIP ${nip} sudah terdaftar atau duplikat dalam list.`);
+                              }
+                              if (nip) existingNips.add(nip);
+                            }
+
+                            setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Guru' });
                             let count = 0;
                             for (const row of jsonData as any[]) {
                               let statusArr: string[] = [];
@@ -4222,14 +4246,13 @@ export default function AdminDashboard() {
                               setUploadProgress({ current: count, total: jsonData.length, label: 'Mengunggah Data Guru' });
                             }
                             fetchData();
-                            alert('Data Guru berhasil diunggah!');
-                          } catch (error) {
+                            alert(`${jsonData.length} Data Guru berhasil diunggah!`);
+                          } catch (error: any) {
                             console.error('Error uploading:', error);
-                            alert('Gagal mengunggah data.');
+                            alert(`Gagal mengunggah data: ${error.message}`);
                           } finally {
                             setLoading(false);
                             setUploadProgress(null);
-                            // Reset input
                             e.target.value = '';
                           }
                         };
@@ -4239,7 +4262,7 @@ export default function AdminDashboard() {
                   </label>
                </div>
              )}
-
+             
              {activeTab === 'subject-teachers' && (
                <div className="flex gap-2">
                   <button 
@@ -4260,10 +4283,10 @@ export default function AdminDashboard() {
                     }}
                     className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm"
                   >
-                    <Download size={14} /> TEMPLATE
+                    <Download size={14} /> TEMPLAT EXCEL
                   </button>
-                  <label className="px-3 py-2 bg-blue-50 text-blue-700 border border-blue-100 rounded text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-1 shadow-sm cursor-pointer">
-                    <CloudUpload size={14} /> UPLOAD TEMPLATE
+                  <label className="px-3 py-2 bg-blue-600 text-white border border-blue-700 rounded text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shadow-md cursor-pointer">
+                    <CloudUpload size={14} /> IMPOR EXCEL
                     <input 
                       type="file" 
                       className="hidden" 
@@ -4285,8 +4308,19 @@ export default function AdminDashboard() {
                           }
 
                           setLoading(true);
-                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Guru Mapel' });
+                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Guru Mapel' });
                           try {
+                            const existingNips = new Set(teachers.map(t => t.nip).filter(Boolean));
+                            
+                            for (const row of jsonData as any[]) {
+                              const nip = String(row['NIP'] || '');
+                              if (nip && existingNips.has(nip)) {
+                                throw new Error(`NIP ${nip} sudah terdaftar atau duplikat dalam list.`);
+                              }
+                              if (nip) existingNips.add(nip);
+                            }
+
+                            setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Guru Mapel' });
                             let count = 0;
                             for (const row of jsonData as any[]) {
                               const subjectsRaw = String(row['Bidang Studi (pisahkan koma: MTK, IPA)'] || '');
@@ -4311,11 +4345,102 @@ export default function AdminDashboard() {
                               count++;
                               setUploadProgress({ current: count, total: jsonData.length, label: 'Mengunggah Data Guru Mapel' });
                             }
-                            alert(`${jsonData.length} Guru Mapel berhasil diunggah!`);
                             fetchData();
-                          } catch (err) {
+                            alert(`${jsonData.length} Guru Mapel berhasil diunggah!`);
+                          } catch (err: any) {
                             console.error(err);
-                            alert('Gagal mengunggah data.');
+                            alert(`Gagal mengunggah data: ${err.message}`);
+                          } finally {
+                            setLoading(false);
+                            setUploadProgress(null);
+                            e.target.value = '';
+                          }
+                        };
+                        reader.readAsArrayBuffer(file);
+                      }}
+                    />
+                  </label>
+               </div>
+             )}
+
+             {activeTab === 'counselors' && (
+               <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      const templateData = [
+                        ['Nama Guru BK', 'NIP', 'SANDI', 'Nomor WA', 'Kelas Bimbingan (pisahkan koma: 7A, 7B)']
+                      ];
+                      const ws = XLSX.utils.aoa_to_sheet(templateData);
+                      const wb = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb, ws, "Template Guru BK");
+                      XLSX.writeFile(wb, "Template_Data_Guru_BK.xlsx");
+                    }}
+                    className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm"
+                  >
+                    <Download size={14} /> TEMPLAT EXCEL
+                  </button>
+                  <label className="px-3 py-2 bg-blue-600 text-white border border-blue-700 rounded text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shadow-md cursor-pointer">
+                    <CloudUpload size={14} /> IMPOR EXCEL
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      accept=".xlsx, .xls" 
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          const data = new Uint8Array(event.target?.result as ArrayBuffer);
+                          const workbook = XLSX.read(data, { type: 'array' });
+                          const sheetName = workbook.SheetNames[0];
+                          const worksheet = workbook.Sheets[sheetName];
+                          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                          
+                          if (jsonData.length === 0) {
+                            alert('File kosong atau format salah.');
+                            return;
+                          }
+
+                          setLoading(true);
+                          setUploadProgress({ current: 0, total: jsonData.length, label: 'Memvalidasi Data Guru BK' });
+                          try {
+                            const existingNips = new Set(teachers.map(t => t.nip).filter(Boolean));
+                            
+                            for (const row of jsonData as any[]) {
+                              const nip = String(row['NIP'] || '');
+                              if (nip && existingNips.has(nip)) {
+                                throw new Error(`NIP ${nip} sudah terdaftar atau duplikat dalam list.`);
+                              }
+                              if (nip) existingNips.add(nip);
+                            }
+
+                            setUploadProgress({ current: 0, total: jsonData.length, label: 'Mengunggah Data Guru BK' });
+                            let count = 0;
+                            for (const row of jsonData as any[]) {
+                              const classesRaw = String(row['Kelas Bimbingan (pisahkan koma: 7A, 7B)'] || '');
+                              const nip = String(row['NIP'] || '');
+                              const password = row['SANDI'] || row['Kata Sandi'] || row['Sandi'] || (nip.length >= 8 ? nip.substring(0, 8) : '123456');
+                              const phoneNumber = String(row['Nomor WA'] || '');
+                              
+                              const managedClasses = classesRaw ? classesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
+
+                              await addDoc(getTenantCollection('teachers'), {
+                                name: row['Nama Guru BK'] || '',
+                                nip: nip,
+                                password: password,
+                                phoneNumber: phoneNumber,
+                                status: ['Guru BK'],
+                                managedClasses: managedClasses,
+                                role: 'COUNSELOR'
+                              });
+                              count++;
+                              setUploadProgress({ current: count, total: jsonData.length, label: 'Mengunggah Data Guru BK' });
+                            }
+                            fetchData();
+                            alert(`${jsonData.length} Guru BK berhasil diunggah!`);
+                          } catch (err: any) {
+                            console.error(err);
+                            alert(`Gagal mengunggah data: ${err.message}`);
                           } finally {
                             setLoading(false);
                             setUploadProgress(null);
