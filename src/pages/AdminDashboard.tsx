@@ -69,7 +69,6 @@ import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 import { AIPredictiveAnalytics } from '../components/AIPredictiveAnalytics';
 import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
-import ThemeSettings from '../components/ThemeSettings';
 import SchoolDataSettings from '../components/SchoolDataSettings';
 import LogoSettings from '../components/LogoSettings';
 import { AttendanceConfig } from '../components/AttendanceConfig';
@@ -541,7 +540,7 @@ export default function AdminDashboard() {
   const [formData, setFormData] = useState<any>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [attendanceFormStudentSearch, setAttendanceFormStudentSearch] = useState('');
-  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data' | 'schools' | 'peran_guru' | 'tema'>('umum');
+  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data' | 'schools' | 'peran_guru'>('umum');
 
   useEffect(() => {
     if (activeTab === 'settings' && settingsSubTab === 'data') {
@@ -5560,7 +5559,6 @@ export default function AdminDashboard() {
                  {[
                    { id: 'umum', label: 'Umum & Konfigurasi' },
                    { id: 'data', label: 'Data & Keamanan' },
-                   { id: 'tema', label: 'Tema Dasbor' },
                    ...(isSuperAdmin ? [{ id: 'schools', label: 'Sekolah' }] : [])
                  ].map(tab => (
                    <button
