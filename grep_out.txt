@@ -1,0 +1,47 @@
+  const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
+  const showConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({isOpen: true, message, onConfirm});
+  const [inqTime, setInqTime] = useState(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [inqDay, setInqDay] = useState(new Intl.DateTimeFormat('id-ID', { weekday: 'long' }).format(new Date()));
+  const [replyMessages, setReplyMessages] = useState<Record<string, string>>({});
+    const day = new Intl.DateTimeFormat('id-ID', { weekday: 'long' }).format(new Date(inqDate));
+      });
+          message: `Guru ${inq.subjectName} (${inq.subjectTeacherName}) telah menjawab pertanyaan Anda: ${response}`,
+        });
+      setReplyMessages(prev => ({ ...prev, [id]: '' }));
+          await updateDoc(getTenantDoc('notifications', n.id), { read: true });
+      });
+      });
+  const [attendanceData, setAttendanceData] = useState<Record<string, { status: 'S' | 'I' | 'D' | 'A' | 'H', notes: string }>>({});
+    });
+    });
+      setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+          });
+      setAttendanceData({});
+    }));
+    }));
+            });
+    });
+        message: `${user?.name} (Guru ${subjectName}) bertanya: ${selectedStudent.name} tidak ada di kelas tanpa keterangan.`,
+      });
+  });
+    });
+    });
+    });
+    const monthName = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(monthYear);
+    });
+    });
+    });
+    })));
+    const monthName = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(monthYear);
+    })));
+    });
+    })));
+                          })}
+                          {inq.createdAt?.toDate ? inq.createdAt.toDate().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Baru'}
+                             onChange={(e) => setReplyMessages(prev => ({ ...prev, [inq.id]: e.target.value }))}
+                    })}
+                    })}
+  })()
+                onClick={() => setConfirmDialog({isOpen: false, message: '', onConfirm: () => {}})}
+                  setConfirmDialog({isOpen: false, message: '', onConfirm: () => {}});

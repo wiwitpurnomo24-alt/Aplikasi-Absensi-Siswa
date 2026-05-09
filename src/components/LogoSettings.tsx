@@ -53,7 +53,7 @@ export default function LogoSettings() {
       setPassword('');
       // Pre-fill with the requested logo URL only if empty
       if (!logoUrl) {
-        setLogoUrl('https://i.ibb.co.com/C5SL3dTB/logo-dutatama.png');
+        setLogoUrl('https://api.dicebear.com/7.x/avataaars/svg?seed=Duta&backgroundColor=b6e3f4&skinColor=ffdbb4&clothing=suitAndTie&clothingColor=3c91e6&topType=shortHair&hairColor=2c1b18');
       }
     } else {
       alert('Password salah!');
@@ -61,7 +61,7 @@ export default function LogoSettings() {
   };
 
   const setDutatamaLogo = () => {
-    setLogoUrl('https://i.ibb.co.com/C5SL3dTB/logo-dutatama.png');
+    setLogoUrl('https://api.dicebear.com/7.x/avataaars/svg?seed=Duta&backgroundColor=b6e3f4&skinColor=ffdbb4&clothing=suitAndTie&clothingColor=3c91e6&topType=shortHair&hairColor=2c1b18');
   };
 
   const handleSave = async () => {

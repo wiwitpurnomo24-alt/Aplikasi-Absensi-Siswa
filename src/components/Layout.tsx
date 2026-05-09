@@ -525,9 +525,9 @@ export default function Layout() {
              </div>
              <div className="text-sm font-medium text-sky-100 hidden md:flex items-center gap-3">
                <img 
-                 src="https://i.ibb.co.com/C5SL3dTB/logo-dutatama.png" 
-                 alt="Dutatama Logo" 
-                 className="h-8 w-auto object-contain"
+                 src="https://api.dicebear.com/7.x/avataaars/svg?seed=Duta&backgroundColor=b6e3f4&skinColor=ffdbb4&clothing=suitAndTie&clothingColor=3c91e6&topType=shortHair&hairColor=2c1b18" 
+                 alt="Duta Avatar" 
+                 className="h-10 w-10 object-contain rounded-full bg-white/20 p-0.5 border border-white/30"
                  referrerPolicy="no-referrer"
                />
                <span className="h-6 w-[1px] bg-sky-400/50 mx-1"></span>

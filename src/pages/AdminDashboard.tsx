@@ -1246,15 +1246,27 @@ export default function AdminDashboard() {
       });
     }
 
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    const day = now.getDay();
+    const diff = now.getDate() - (day === 0 ? 6 : day - 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeekStr = startOfWeek.toISOString().split('T')[0];
+
     return {
       totalStudents: baseStudents.length,
       sakit: baseAttendance.filter(a => a.type === 'Sakit').length,
       izin: baseAttendance.filter(a => a.type === 'Izin').length,
       dispensasi: baseAttendance.filter(a => a.type === 'Dispensasi').length,
+      weeklySakit: baseAttendance.filter(a => a.type === 'Sakit' && a.date >= startOfWeekStr).length,
+      weeklyIzin: baseAttendance.filter(a => a.type === 'Izin' && a.date >= startOfWeekStr).length,
+      weeklyDispensasi: baseAttendance.filter(a => a.type === 'Dispensasi' && a.date >= startOfWeekStr).length,
+      weeklyAlpa: baseAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date >= startOfWeekStr).length + baseSubjectAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date >= startOfWeekStr).length,
       todaySakit: baseAttendance.filter(a => a.type === 'Sakit' && a.date === today).length,
       todayIzin: baseAttendance.filter(a => a.type === 'Izin' && a.date === today).length,
       todayDispensasi: baseAttendance.filter(a => a.type === 'Dispensasi' && a.date === today).length,
-      todayAlpa: baseAttendance.filter(a => a.type === 'Alpa' && a.date === today).length + baseSubjectAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length,
+      todayAlpa: baseAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length + baseSubjectAttendance.filter(a => (a.type === 'Alpa' || a.status === 'A') && a.date === today).length,
       todayOnTime: basePresence.filter(p => p.type === 'arrival' && (p.status === 'Tepat Waktu' || p.status === 'Hadir')).length,
       todayLate: basePresence.filter(p => p.type === 'arrival' && p.status === 'Terlambat').length,
     };
@@ -3008,23 +3020,27 @@ export default function AdminDashboard() {
       {/* Stats Cards - AdminLTE 스타일 Small Box */}
       {activeTab === 'overview' && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
             {[
-              { label: 'Total Siswa', value: stats.totalStudents, icon: GraduationCap, color: 'bg-info', bg: 'bg-blue-500' },
-              { label: 'Total Sakit', value: stats.sakit, icon: AlertCircle, color: 'bg-danger', bg: 'bg-red-500' },
-              { label: 'Total Izin', value: stats.izin, icon: CalendarIcon, color: 'bg-success', bg: 'bg-green-500' },
-              { label: 'Total Dispensasi', value: stats.dispensasi, icon: CheckCircle2, color: 'bg-purple', bg: 'bg-purple-500' },
+              { label: 'Total Siswa', value: stats.totalStudents, icon: GraduationCap, color: 'bg-info', bg: 'bg-blue-500', sub: 'Keseluruhan' },
+              { label: 'Sakit', value: stats.weeklySakit, icon: AlertCircle, color: 'bg-danger', bg: 'bg-red-500', sub: 'Rekap Mingguan' },
+              { label: 'Izin', value: stats.weeklyIzin, icon: CalendarIcon, color: 'bg-success', bg: 'bg-green-500', sub: 'Rekap Mingguan' },
+              { label: 'Dispensasi', value: stats.weeklyDispensasi, icon: CheckCircle2, color: 'bg-purple', bg: 'bg-purple-500', sub: 'Rekap Mingguan' },
+              { label: 'Alpa', value: stats.weeklyAlpa, icon: XCircle, color: 'bg-dark', bg: 'bg-slate-700', sub: 'Rekap Mingguan' },
             ].map((stat, i) => (
-              <div key={`${stat.label}-${i}`} className={cn("relative overflow-hidden rounded-lg shadow-sm text-white", stat.bg)}>
-                <div className="p-2 z-10 relative">
-                  <h3 className="text-xl font-bold mb-0.5">{stat.value}</h3>
-                  <p className="text-xs font-medium opacity-90">{stat.label}</p>
+              <div key={`${stat.label}-${i}`} className={cn("relative overflow-hidden rounded-xl shadow-md text-white border-2 border-white/10", stat.bg)}>
+                <div className="p-3 z-10 relative">
+                  <div className="flex flex-col">
+                    <h3 className="text-2xl font-black mb-0">{stat.value}</h3>
+                    <p className="text-[10px] font-black uppercase tracking-tight leading-none mb-1">{stat.label}</p>
+                    <span className="text-[8px] font-bold opacity-70 uppercase tracking-widest">{stat.sub}</span>
+                  </div>
                 </div>
-                <div className="absolute right-1 top-1 opacity-20 transform scale-125">
-                  <stat.icon size={32} />
+                <div className="absolute right-2 top-2 opacity-10 transform scale-150 rotate-12">
+                  <stat.icon size={48} />
                 </div>
-                <div className="bg-black/10 text-center py-0.5 text-[8px] font-bold uppercase tracking-wider cursor-pointer hover:bg-black/20 transition-all">
-                   Selengkapnya <Plus size={8} className="inline ml-1" />
+                <div className="bg-black/10 text-center py-1 text-[8px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/20 transition-all border-t border-white/5">
+                   Info Detail <Plus size={8} className="inline ml-1" />
                 </div>
               </div>
             ))}
