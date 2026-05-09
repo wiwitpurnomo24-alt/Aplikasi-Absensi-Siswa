@@ -69,6 +69,7 @@ import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 import { AIPredictiveAnalytics } from '../components/AIPredictiveAnalytics';
 import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
+import ThemeSettings from '../components/ThemeSettings';
 import SchoolDataSettings from '../components/SchoolDataSettings';
 import LogoSettings from '../components/LogoSettings';
 import { AttendanceConfig } from '../components/AttendanceConfig';
@@ -538,7 +539,9 @@ export default function AdminDashboard() {
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState<any>({});
-  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data' | 'schools' | 'peran_guru'>('umum');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [attendanceFormStudentSearch, setAttendanceFormStudentSearch] = useState('');
+  const [settingsSubTab, setSettingsSubTab] = useState<'akademik' | 'umum' | 'data' | 'schools' | 'peran_guru' | 'tema'>('umum');
 
   useEffect(() => {
     if (activeTab === 'settings' && settingsSubTab === 'data') {
@@ -951,6 +954,63 @@ export default function AdminDashboard() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrors({});
+    
+    if (activeTab === 'attendance-detail') {
+      const newErrors: Record<string, string> = {};
+      if (!formData.studentId) newErrors.studentId = "Siswa harus dipilih";
+      if (!formData.date) newErrors.date = "Tanggal harus diisi";
+      if (!formData.type) newErrors.type = "Jenis harus dipilih";
+      if (!formData.reason || formData.reason.trim().length < 5) {
+        newErrors.reason = "Alasan harus diisi minimal 5 karakter";
+      }
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const student = students.find(s => s.id === formData.studentId);
+        const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+        const dateObj = new Date(formData.date);
+        const dayName = dayNames[dateObj.getDay()];
+
+        const payload = {
+          studentId: formData.studentId,
+          studentName: student?.name || '',
+          nis: student?.nis || '',
+          className: student?.className || '-',
+          date: formData.date,
+          day: dayName,
+          type: formData.type,
+          reason: formData.reason,
+          parentName: 'Admin Input',
+          parentPhone: '-',
+          status: 'Approved',
+          source: 'Admin',
+          submittedAt: serverTimestamp(),
+          processedBy: user?.name || 'Admin',
+          processedById: user?.uid || null
+        };
+
+        await addDoc(getTenantCollection('attendance'), payload);
+        
+        // Early Warning Check
+        checkAttendanceAlert(payload.studentId, payload.studentName, payload.className).catch(console.error);
+
+        setShowAddModal(false);
+        fetchData();
+        alert('Berhasil menambahkan data absensi!');
+      } catch (err: any) {
+        handleFirestoreError(err, 'create', 'Manual Attendance Admin');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     try {
       const colName = 
@@ -2815,12 +2875,16 @@ export default function AdminDashboard() {
                           <div className={cn(
                             "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
                             !notif.read 
-                              ? (notif.title?.includes('Izin') ? "bg-amber-500 text-white shadow-sm" : 
+                              ? (notif.title?.includes('Terlambat') ? "bg-red-500 text-white shadow-sm" :
+                                 notif.title?.includes('Pulang') ? "bg-amber-500 text-white shadow-sm" :
+                                 notif.title?.includes('Izin') ? "bg-amber-500 text-white shadow-sm" : 
                                  notif.title?.includes('Status') ? "bg-green-500 text-white shadow-sm" :
                                  "bg-blue-500 text-white shadow-sm")
                               : "bg-gray-100 text-gray-400"
                           )}>
-                            {notif.title?.includes('Izin') ? <Calendar size={14} /> : 
+                            {notif.title?.includes('Terlambat') ? <Clock size={14} /> : 
+                             notif.title?.includes('Pulang') ? <Clock size={14} /> :
+                             notif.title?.includes('Izin') ? <Calendar size={14} /> : 
                              notif.title?.includes('Status') ? <CheckCircle2 size={14} /> :
                              notif.title?.includes('Pesan') ? <MessageSquare size={14} /> :
                              <Bell size={14} />}
@@ -4531,7 +4595,7 @@ export default function AdminDashboard() {
              )}
            </div>
 
-           {(activeTab !== 'attendance' && activeTab !== 'settings' && activeTab !== 'academic-years') && (
+           {(activeTab === 'attendance-detail' || (activeTab !== 'attendance' && activeTab !== 'settings' && activeTab !== 'academic-years')) && (
              <div className="flex gap-2">
                {activeTab === 'classes' && (
                  <button 
@@ -4543,11 +4607,25 @@ export default function AdminDashboard() {
                  </button>
                )}
                <button 
-                 onClick={() => { setFormData({}); setShowAddModal(true); }}
+                 onClick={() => { 
+                   if (activeTab === 'attendance-detail') {
+                     setFormData({ 
+                       date: new Date().toISOString().split('T')[0],
+                       type: 'Sakit',
+                       status: 'Approved'
+                     });
+                     setErrors({});
+                     setAttendanceFormStudentSearch('');
+                   } else {
+                     setFormData({});
+                   }
+                   setShowAddModal(true); 
+                 }}
                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md"
                >
                  <Plus size={18} />
-                 {activeTab === 'classes' ? 'Atur Tampilan Kelas' : 'Tambah Data'}
+                 {activeTab === 'classes' ? 'Atur Tampilan Kelas' : 
+                  activeTab === 'attendance-detail' ? 'Input Manual' : 'Tambah Data'}
                </button>
              </div>
            )}
@@ -5482,6 +5560,7 @@ export default function AdminDashboard() {
                  {[
                    { id: 'umum', label: 'Umum & Konfigurasi' },
                    { id: 'data', label: 'Data & Keamanan' },
+                   { id: 'tema', label: 'Tema Dasbor' },
                    ...(isSuperAdmin ? [{ id: 'schools', label: 'Sekolah' }] : [])
                  ].map(tab => (
                    <button
@@ -5897,7 +5976,20 @@ export default function AdminDashboard() {
                          </div>
                        ))}
                        <button 
-                        onClick={() => { setFormData({}); setShowAddModal(true); }}
+                        onClick={() => { 
+                    if (activeTab === 'attendance-detail') {
+                      setFormData({ 
+                        date: new Date().toISOString().split('T')[0],
+                        type: 'Sakit',
+                        status: 'Approved'
+                      });
+                      setErrors({});
+                      setAttendanceFormStudentSearch('');
+                    } else {
+                      setFormData({});
+                    }
+                    setShowAddModal(true); 
+                  }}
                         className="p-6 rounded-3xl border-2 border-dashed border-sky-100 flex flex-col items-center justify-center text-sky-300 hover:bg-sky-50/50 hover:border-sky-300 hover:text-sky-400 transition-all min-h-[70px] group"
                        >
                           <Plus size={24} className="group-hover:scale-110 transition-transform" />
@@ -6301,7 +6393,112 @@ export default function AdminDashboard() {
                  </h3>
                  <button onClick={() => setShowAddModal(false)}><X size={24} /></button>
               </div>
-              <form onSubmit={handleAdd} className="p-6 space-y-4">
+              <form onSubmit={handleAdd} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                 {activeTab === 'attendance-detail' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Cari Siswa</label>
+                          <div className="relative">
+                            <Search className="absolute left-3 top-3 text-gray-400" size={14} />
+                            <input 
+                              type="text"
+                              placeholder="Ketik nama atau NIS..."
+                              className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                              value={attendanceFormStudentSearch}
+                              onChange={e => setAttendanceFormStudentSearch(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Pilih Siswa</label>
+                          <select 
+                            className={cn(
+                              "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                              errors.studentId ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                            )}
+                            value={formData.studentId || ''}
+                            onChange={e => {
+                              setFormData({...formData, studentId: e.target.value});
+                              if (errors.studentId) setErrors(prev => ({ ...prev, studentId: '' }));
+                            }}
+                          >
+                            <option value="">Pilih Siswa</option>
+                            {students
+                              .filter(s => 
+                                (s.name || '').toLowerCase().includes(attendanceFormStudentSearch.toLowerCase()) || 
+                                (s.nis || '').includes(attendanceFormStudentSearch)
+                              )
+                              .sort((a,b) => (a.name || '').localeCompare(b.name || ''))
+                              .map(s => (
+                                <option key={s.id} value={s.id}>{s.name} ({s.className})</option>
+                              ))
+                            }
+                          </select>
+                          {errors.studentId && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.studentId}</p>}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Tanggal</label>
+                          <input 
+                            type="date"
+                            value={formData.date || ''}
+                            onChange={e => {
+                              setFormData({...formData, date: e.target.value});
+                              if (errors.date) setErrors(prev => ({ ...prev, date: '' }));
+                            }}
+                            className={cn(
+                              "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                              errors.date ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                            )}
+                          />
+                          {errors.date && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.date}</p>}
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Jenis</label>
+                          <select 
+                            value={formData.type || ''}
+                            onChange={e => {
+                              setFormData({...formData, type: e.target.value});
+                              if (errors.type) setErrors(prev => ({ ...prev, type: '' }));
+                            }}
+                            className={cn(
+                              "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                              errors.type ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                            )}
+                          >
+                            <option value="Sakit">Sakit</option>
+                            <option value="Izin">Izin</option>
+                            <option value="Dispensasi">Dispensasi</option>
+                            <option value="Alpa">Alpa</option>
+                          </select>
+                          {errors.type && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.type}</p>}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Alasan / Keterangan</label>
+                        <textarea 
+                          rows={3}
+                          placeholder="Contoh: Mengikuti lomba musik tingkat nasional..."
+                          className={cn(
+                            "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none resize-none transition-all",
+                            errors.reason ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                          )}
+                          value={formData.reason || ''}
+                          onChange={e => {
+                            setFormData({...formData, reason: e.target.value});
+                            if (errors.reason) setErrors(prev => ({ ...prev, reason: '' }));
+                          }}
+                        />
+                        {errors.reason && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.reason}</p>}
+                      </div>
+                    </div>
+                 )}
+                 {activeTab !== 'attendance-detail' && (
+                  <>
                  {(activeTab === 'academic-years' || (activeTab === 'settings' && settingsSubTab !== 'schools')) && (
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Tahun Akademik</label>
@@ -6553,8 +6750,15 @@ export default function AdminDashboard() {
                     </>
                  )}
                  <button type="submit" className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
-                    <Save size={18} /> Simpan Data
+                    {loading ? (
+                      <RefreshCw size={18} className="animate-spin" />
+                    ) : (
+                      <Save size={18} />
+                    )}
+                    {formData.id ? 'Simpan Perubahan' : (activeTab === 'attendance-detail' ? 'Simpan Kehadiran' : 'Tambah Data')}
                  </button>
+                </>
+              )}
               </form>
            </motion.div>
         </div>

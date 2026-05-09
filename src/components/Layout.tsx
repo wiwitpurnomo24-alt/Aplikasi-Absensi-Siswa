@@ -39,6 +39,7 @@ import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { useAuthStore } from '../lib/auth-store';
 import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, limit, getDocs } from 'firebase/firestore';
+import { getDoc } from 'firebase/firestore';
 import { SchoolData, UserRole } from '../types';
 import { getTenantCollection, getTenantDoc } from '../lib/tenant';
 
@@ -65,6 +66,25 @@ export default function Layout() {
   const [isLoading, setIsLoading] = useState(true);
 
   const [schoolData, setSchoolData] = useState<SchoolData | null>(null);
+  const [theme, setTheme] = useState({ primaryColor: '#0284c7', secondaryColor: '#e0f2fe' });
+
+  useEffect(() => {
+    const fetchTheme = async () => {
+      try {
+        const docRef = getTenantDoc('schoolConfig', 'main');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().theme) {
+          const fetchedTheme = docSnap.data().theme;
+          setTheme(fetchedTheme);
+          document.documentElement.style.setProperty('--primary-color', fetchedTheme.primaryColor);
+          document.documentElement.style.setProperty('--secondary-color', fetchedTheme.secondaryColor);
+        }
+      } catch (err) {
+        console.error("Error fetching theme:", err);
+      }
+    };
+    fetchTheme();
+  }, []);
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({
     'DATA ADMINISTRASI': true,
     'DATA ABSENSI': false,

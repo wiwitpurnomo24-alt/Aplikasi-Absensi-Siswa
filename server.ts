@@ -379,7 +379,7 @@ async function startServer() {
               status = 'TEPAT WAKTU';
           }
       } else if (type === 'departure') {
-          status = timeStr < config.departureTime ? 'PULANG CEPAT' : 'PULANG TEPAT WAKTU';
+          status = timeStr < config.departureTime ? 'PULANG AWAL' : 'PULANG TEPAT WAKTU';
       }
 
       // Save Presence
@@ -395,37 +395,94 @@ async function startServer() {
           ...(lateTime && { lateTime })
       });
 
-      // Notify Parents & Homeroom Teacher if Late
-      if (status === 'TERLAMBAT') {
-          // Notify Homeroom Teacher
+      // Create targeted notifications
+      const isLate = status.startsWith('TERLAMBAT');
+      const isEarly = status === 'PULANG AWAL';
+
+      if (isLate || isEarly) {
+          const notifTitle = isLate ? 'Siswa Terlambat' : 'Siswa Pulang Awal';
+          const notifType = isLate ? 'ATTENDANCE_LATE' : 'ATTENDANCE_EARLY';
+          const notifMessage = isLate 
+              ? `Siswa ${student.name} (${student.className}) TERLAMBAT datang. Scan masuk: ${timeStr}`
+              : `Siswa ${student.name} (${student.className}) PULANG AWAL. Scan keluar: ${timeStr} (Jadwal: ${config.departureTime})`;
+
+          // 1. Notify Admin
+          await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
+            targetRole: 'ADMIN',
+            className: student.className,
+            studentName: student.name,
+            studentId: studentIdToUse,
+            message: notifMessage,
+            title: notifTitle,
+            read: false,
+            type: notifType,
+            createdAt: Timestamp.now()
+          });
+
+          // 2. Notify Homeroom Teacher
           const teacherQuery = query(collection(db, getCollectionPath(schoolId, 'teachers')), where('className', '==', student.className));
           const teacherSnap = await getDocs(teacherQuery);
           if (!teacherSnap.empty) {
              const homeroomTeacher = teacherSnap.docs[0].data();
-             await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
-                targetUserId: homeroomTeacher.uid,
-                message: `Perhatian: Siswa ${student.name} (Kelas ${student.className}) terlambat datang.`,
-                title: 'Siswa Terlambat',
-                read: false,
-                type: 'ATTENDANCE_LATE',
-                createdAt: Timestamp.now()
-             });
+             if (homeroomTeacher.uid) {
+               await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
+                  targetUserId: homeroomTeacher.uid,
+                  message: notifMessage,
+                  title: notifTitle,
+                  read: false,
+                  type: notifType,
+                  createdAt: Timestamp.now()
+               });
+             }
           }
+
+          // 3. Notify Parent (App Internal)
+          await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
+            targetRole: 'PARENT',
+            studentId: studentIdToUse,
+            message: `Anak Anda, ${student.name}, tercatat ${isLate ? 'TERLAMBAT' : 'PULANG AWAL'} pada jam ${timeStr}.`,
+            title: notifTitle,
+            read: false,
+            type: notifType,
+            createdAt: Timestamp.now()
+          });
       }
 
-      // Notify via WhatsApp (using saved whatsapp settings)
+      // Notify via WhatsApp
       const waConfigDoc = await getDoc(doc(db, getDocPath(schoolId, 'systemSettings', 'whatsappConfig')));
-      if (waConfigDoc.exists()) {
+      if (waConfigDoc.exists() && student.parentPhone && student.parentPhone !== '-') {
           const waSettings = waConfigDoc.data();
-          const message = status === 'TERLAMBAT' 
-              ? `Perhatian: ${student.name} dari kelas ${student.className} terlambat masuk sekolah. Jam scan: ${timeStr}`
-              : `Halo, ${student.name} dari kelas ${student.className} telah melakukan scan ${type}. Status: ${status}. Jam: ${timeStr}`;
+          
+          let formattedPhone = String(student.parentPhone).replace(/\D/g, '');
+          if (formattedPhone.startsWith('0')) {
+              formattedPhone = '62' + formattedPhone.substring(1);
+          } else if (formattedPhone.startsWith('8')) {
+              formattedPhone = '62' + formattedPhone;
+          }
+
+          const message = status.startsWith('TERLAMBAT') 
+              ? `*NOTIFIKASI KEHADIRAN SISWA (TERLAMBAT)*\n\n` +
+                `Perhatian: ${student.name} (Kelas ${student.className}) terlambat datang ke sekolah.\n` +
+                `Jam Scan: ${timeStr}\n` +
+                `Status: ${status}\n\n` +
+                `_*Pesan otomatis dari Sistem SIAP Sekolah._`
+              : status === 'PULANG AWAL'
+              ? `*NOTIFIKASI KEHADIRAN SISWA (PULANG AWAL)*\n\n` +
+                `Perhatian: ${student.name} (Kelas ${student.className}) pulang sebelum waktu yang ditentukan.\n` +
+                `Jam Scan: ${timeStr}\n` +
+                `Jadwal Pulang: ${config.departureTime}\n\n` +
+                `_*Pesan otomatis dari Sistem SIAP Sekolah._`
+              : `*NOTIFIKASI KEHADIRAN SISWA*\n\n` +
+                `Halo, ${student.name} (Kelas ${student.className}) baru saja melakukan scan ${type === 'arrival' ? 'MASUK' : 'PULANG'}.\n` +
+                `Jam Scan: ${timeStr}\n` +
+                `Status: ${status}\n\n` +
+                `_*Pesan otomatis dari Sistem SIAP Sekolah._`;
           
           await fetch(waSettings.apiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${waSettings.apiKey}` },
               body: JSON.stringify({
-                  to: student.parentPhone,
+                  to: formattedPhone,
                   message: message,
                   sender: waSettings.senderNumber
               })

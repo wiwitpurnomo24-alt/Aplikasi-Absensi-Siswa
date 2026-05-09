@@ -90,6 +90,8 @@ export default function TeacherDashboard() {
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [addFormStudentSearch, setAddFormStudentSearch] = useState('');
 
   const compressImage = async (file: File | Blob, fileName: string): Promise<File> => {
     return new Promise((resolve, reject) => {
@@ -552,10 +554,33 @@ export default function TeacherDashboard() {
     }
   };
 
+  const filteredManualStudents = useMemo(() => {
+    return manualStudents.filter(s => 
+      (s.name || '').toLowerCase().includes(addFormStudentSearch.toLowerCase()) ||
+      (s.nis || '').includes(addFormStudentSearch)
+    ).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+  }, [manualStudents, addFormStudentSearch]);
+
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addFormData.studentId || !addFormData.type || !addFormData.date || !addFormData.reason) {
-      alert("Harap lengkapi semua kolom wajib!");
+    setErrors({});
+    
+    // Client-side validation
+    const newErrors: Record<string, string> = {};
+    if (!addFormData.date) newErrors.date = "Tanggal mulai harus diisi";
+    if (addFormData.isRange && !addFormData.endDate) newErrors.endDate = "Tanggal selesai harus diisi";
+    if (addFormData.isRange && addFormData.date && addFormData.endDate && addFormData.endDate < addFormData.date) {
+      newErrors.endDate = "Tanggal selesai tidak boleh sebelum tanggal mulai";
+    }
+    if (!addFormData.studentId) newErrors.studentId = "Siswa harus dipilih";
+    if (!addFormData.type) newErrors.type = "Jenis absensi harus dipilih";
+    if (!addFormData.reason || addFormData.reason.trim().length < 5) {
+      newErrors.reason = "Alasan harus diisi minimal 5 karakter";
+    }
+    if (!addFormClass) newErrors.className = "Kelas harus dipilih";
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
       return;
     }
 
@@ -2247,36 +2272,63 @@ export default function TeacherDashboard() {
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Kelas</label>
                   <select 
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    className={cn(
+                      "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                      errors.className ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                    )}
                     value={addFormClass}
                     onChange={e => {
                       setAddFormClass(e.target.value);
                       setAddFormData({...addFormData, studentId: ''}); // reset student selection
+                      setAddFormStudentSearch('');
+                      if (errors.className) setErrors(prev => ({ ...prev, className: '' }));
                     }}
-                    required
                   >
                     <option value="">Pilih Kelas</option>
                     {[...allClasses].sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric:true})).map((c, i) => (
                       <option key={`opt-class-v2-${c.id || i}-${i}`} value={c.name}>{c.name}</option>
                     ))}
                   </select>
+                  {errors.className && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.className}</p>}
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Siswa</label>
-                  <select 
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-                    value={addFormData.studentId || ''}
-                    onChange={e => setAddFormData({...addFormData, studentId: e.target.value})}
-                    required
-                    disabled={!addFormClass}
-                  >
-                    <option value="">Pilih Siswa</option>
-                    {manualStudents.map((s, i) => (
-                      <option key={`opt-std-v2-${s.id || i}-${i}`} value={s.id}>{s.name} - {s.nis}</option>
-                    ))}
-                  </select>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Ketik Nama Siswa</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-3 text-gray-400" size={14} />
+                    <input 
+                      type="text"
+                      placeholder="Cari siswa..."
+                      className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                      value={addFormStudentSearch}
+                      onChange={e => setAddFormStudentSearch(e.target.value)}
+                      disabled={!addFormClass}
+                    />
+                  </div>
                 </div>
               </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Pilih Nama Siswa</label>
+                <select 
+                  className={cn(
+                    "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                    errors.studentId ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                  )}
+                  value={addFormData.studentId || ''}
+                  onChange={e => {
+                    setAddFormData({...addFormData, studentId: e.target.value});
+                    if (errors.studentId) setErrors(prev => ({ ...prev, studentId: '' }));
+                  }}
+                  disabled={!addFormClass}
+                >
+                  <option value="">Pilih Siswa ({filteredManualStudents.length})</option>
+                  {filteredManualStudents.map((s, i) => (
+                    <option key={`opt-std-v2-${s.id || i}-${i}`} value={s.id}>{s.name} - {s.nis}</option>
+                  ))}
+                </select>
+                {errors.studentId && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.studentId}</p>}
+              </div>
+
               <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50 mb-2">
                 <div className="flex items-center gap-2">
                   <input 
@@ -2297,33 +2349,50 @@ export default function TeacherDashboard() {
                   </label>
                   <input 
                     type="date"
-                    required
                     value={addFormData.date || ''}
-                    onChange={e => setAddFormData({...addFormData, date: e.target.value})}
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    onChange={e => {
+                      setAddFormData({...addFormData, date: e.target.value});
+                      if (errors.date) setErrors(prev => ({ ...prev, date: '' }));
+                    }}
+                    className={cn(
+                      "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                      errors.date ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                    )}
                   />
+                  {errors.date && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.date}</p>}
                 </div>
                 {addFormData.isRange && (
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Sampai Tanggal</label>
                     <input 
                       type="date"
-                      required
                       value={addFormData.endDate || ''}
-                      onChange={e => setAddFormData({...addFormData, endDate: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                      onChange={e => {
+                        setAddFormData({...addFormData, endDate: e.target.value});
+                        if (errors.endDate) setErrors(prev => ({ ...prev, endDate: '' }));
+                      }}
+                      className={cn(
+                        "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                        errors.endDate ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                      )}
                     />
+                    {errors.endDate && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.endDate}</p>}
                   </div>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Jenis</label>
                   <select 
-                    required
                     value={addFormData.type || ''}
-                    onChange={e => setAddFormData({...addFormData, type: e.target.value as any})}
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                    onChange={e => {
+                      setAddFormData({...addFormData, type: e.target.value as any});
+                      if (errors.type) setErrors(prev => ({ ...prev, type: '' }));
+                    }}
+                    className={cn(
+                      "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all",
+                      errors.type ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                    )}
                   >
                     <option value="">Pilih Jenis</option>
                     <option value="Sakit">Sakit</option>
@@ -2331,69 +2400,85 @@ export default function TeacherDashboard() {
                     <option value="Dispensasi">Dispensasi</option>
                     <option value="Alpa">Alpa</option>
                   </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">
-                    {isCompressing ? 'Sedang Mengompres...' : 'Dok. Pendukung (PDF/IMG)'}
-                  </label>
-                  <input 
-                    type="file" 
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) {
-                        setSelectedFile(null);
-                        return;
-                      }
-
-                      // Only compress if it's an image
-                      if (file.type.startsWith('image/')) {
-                        setIsCompressing(true);
-                        try {
-                          const compressed = await compressImage(file, file.name);
-                          setSelectedFile(compressed);
-                        } catch (err) {
-                          console.error(err);
-                          alert("Gagal memproses gambar");
-                          e.target.value = '';
-                          setSelectedFile(null);
-                        } finally {
-                          setIsCompressing(false);
-                        }
-                      } else {
-                        // For PDF, only limit size
-                        if (file.size > 500 * 1024) {
-                          alert("File PDF terlalu besar (Maks 500 KB)");
-                          e.target.value = '';
-                          setSelectedFile(null);
-                          return;
-                        }
-                        setSelectedFile(file);
-                      }
-                    }}
-                    className={cn(
-                      "w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs outline-none",
-                      isCompressing ? "opacity-50 cursor-not-allowed" : "focus:ring-2 focus:ring-blue-600"
-                    )}
-                    disabled={isCompressing}
-                  />
-                  <p className="mt-1 text-[9px] text-gray-400 italic">
-                    * File gambar akan dikompres otomatis ke &lt; 500 KB.
-                  </p>
+                  {errors.type && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.type}</p>}
                 </div>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Alasan / Keterangan (Opsional)</label>
-                <textarea 
-                  rows={2}
-                  placeholder="Berikan alasan sakit atau keterangan izin..."
-                  value={addFormData.reason || ''}
-                  onChange={e => setAddFormData({...addFormData, reason: e.target.value})}
-                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none"
-                />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block text-center">
+                    {isCompressing ? 'Sedang Mengompres...' : 'Dokumen Pendukung (PDF/IMG/Opsional)'}
+                  </label>
+                  <div className="relative group">
+                    <input 
+                      type="file" 
+                      id="manualAttachment"
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) {
+                          setSelectedFile(null);
+                          return;
+                        }
+
+                        if (file.type.startsWith('image/')) {
+                          setIsCompressing(true);
+                          try {
+                            const compressed = await compressImage(file, file.name);
+                            setSelectedFile(compressed);
+                          } catch (err) {
+                            console.error(err);
+                            setSelectedFile(file);
+                          } finally {
+                            setIsCompressing(false);
+                          }
+                        } else {
+                          setSelectedFile(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <label 
+                      htmlFor="manualAttachment"
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-all group-hover:scale-[1.01]"
+                    >
+                      {selectedFile ? (
+                        <div className="flex items-center gap-2 text-blue-600 font-bold overflow-hidden">
+                          <CheckCircle2 size={18} />
+                          <span className="text-xs truncate max-w-[200px]">{selectedFile.name}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-gray-400 group-hover:text-blue-500 font-bold transition-colors">
+                          <Plus size={18} />
+                          <span className="text-xs">Klik untuk pilih file</span>
+                        </div>
+                      )}
+                    </label>
+                  </div>
               </div>
-              <button type="submit" className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors mt-2">
-                Simpan Kehadiran
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Catatan / Keterangan</label>
+                <textarea 
+                  className={cn(
+                    "w-full px-4 py-2.5 bg-gray-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-600 outline-none min-h-[80px] resize-none transition-all",
+                    errors.reason ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                  )}
+                  value={addFormData.reason || ''}
+                  onChange={e => {
+                    setAddFormData({...addFormData, reason: e.target.value});
+                    if (errors.reason) setErrors(prev => ({ ...prev, reason: '' }));
+                  }}
+                  placeholder="Contoh: Sakit demam dan pusing, sedang berobat..."
+                />
+                {errors.reason && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.reason}</p>}
+              </div>
+              <button 
+                type="submit" 
+                disabled={isCompressing}
+                className={cn(
+                  "w-full py-3 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 mt-2",
+                  isCompressing ? "opacity-50 cursor-not-allowed" : "active:scale-95"
+                )}
+              >
+                {isCompressing ? 'MOHON TUNGGU...' : 'SIMPAN KEHADIRAN'}
               </button>
             </form>
           </motion.div>

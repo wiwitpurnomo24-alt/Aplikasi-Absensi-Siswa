@@ -20,7 +20,9 @@ import {
   Download,
   GraduationCap,
   Star,
-  TrendingUp
+  TrendingUp,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { 
@@ -152,7 +154,9 @@ export default function SubjectTeacherDashboard() {
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterClass, setFilterClass] = useState('All');
   const [filterStudent, setFilterStudent] = useState('All');
+  const [filterSubject, setFilterSubject] = useState('All');
   const [filterPeriod, setFilterPeriod] = useState('Semua');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   // Attendance state for mass input
   const [attendanceData, setAttendanceData] = useState<Record<string, { status: 'S' | 'I' | 'D' | 'A' | 'H', notes: string }>>({});
@@ -402,6 +406,7 @@ export default function SubjectTeacherDashboard() {
     const matchesStatus = filterStatus === 'All' || att.status === filterStatus;
     const matchesClass = filterClass === 'All' || att.className === filterClass;
     const matchesStudent = filterStudent === 'All' || att.studentId === filterStudent;
+    const matchesSubject = filterSubject === 'All' || att.subjectName === filterSubject;
     
     let matchesPeriod = true;
     if (filterPeriod === 'Harian') matchesPeriod = att.date === new Date().toISOString().split('T')[0];
@@ -413,8 +418,16 @@ export default function SubjectTeacherDashboard() {
     }
     else if (filterPeriod === 'Bulanan') matchesPeriod = att.date.startsWith(new Date().toISOString().slice(0, 7));
 
-    return matchesDate && matchesStatus && matchesClass && matchesStudent && matchesPeriod;
+    return matchesDate && matchesStatus && matchesClass && matchesStudent && matchesSubject && matchesPeriod;
   });
+
+  const subjectsList = useMemo(() => {
+    const subjects = new Set<string>();
+    subjectAttendances.forEach(att => {
+      if (att.subjectName) subjects.add(att.subjectName);
+    });
+    return Array.from(subjects).sort();
+  }, [subjectAttendances]);
 
   const [filterMonth, setFilterMonth] = useState('');
   const [filterSemester, setFilterSemester] = useState('');
@@ -447,10 +460,13 @@ export default function SubjectTeacherDashboard() {
     });
   }, [subjectAttendances, filterSemester]);
 
-  const exportPDF = () => {
-    const doc = new jsPDF();
-    doc.text(`Laporan Absensi Mata Pelajaran - ${user?.name}`, 14, 15);
-    doc.text(`Tanggal: ${filterDate || 'Semua'} | Status: ${filterStatus} | Kelas: ${filterClass}`, 14, 25);
+  const toggleExpand = (id: string) => {
+    const newExpanded = new Set(expandedIds);
+    if (newExpanded.has(id)) newExpanded.delete(id);
+    else newExpanded.add(id);
+    setExpandedIds(newExpanded);
+  };
+    doc.text(`Tanggal: ${filterDate || 'Semua'} | Status: ${filterStatus} | Kelas: ${filterClass} | Mapel: ${filterSubject}`, 14, 25);
     
     autoTable(doc, {
       startY: 30,
@@ -1114,7 +1130,7 @@ export default function SubjectTeacherDashboard() {
             </div>
             
             <div className="p-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 mb-6">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Filter Tanggal</label>
                   <input 
@@ -1132,11 +1148,11 @@ export default function SubjectTeacherDashboard() {
                     onChange={e => setFilterStatus(e.target.value)}
                   >
                     <option value="All">Semua Status</option>
-                    <option value="H">Hadir</option>
-                    <option value="S">Sakit</option>
-                    <option value="I">Izin</option>
-                    <option value="D">Dispen</option>
-                    <option value="A">Alpa</option>
+                    {['H', 'S', 'I', 'D', 'A'].map(s => (
+                      <option key={`filter-status-${s}`} value={s}>
+                        {s === 'H' ? 'Hadir' : s === 'S' ? 'Sakit' : s === 'I' ? 'Izin' : s === 'D' ? 'Dispen' : 'Alpa'}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -1148,6 +1164,19 @@ export default function SubjectTeacherDashboard() {
                   >
                     <option value="All">Semua Kelas</option>
                     {classes.map((cl, idx) => <option key={`log-cl-${cl.id || 'c'}-${idx}`} value={cl.name}>{cl.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Mata Pelajaran</label>
+                  <select 
+                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-blue-500"
+                    value={filterSubject}
+                    onChange={e => setFilterSubject(e.target.value)}
+                  >
+                    <option value="All">Semua Mapel</option>
+                    {subjectsList.map((sub, idx) => (
+                      <option key={`filter-sub-${idx}`} value={sub}>{sub}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -1170,76 +1199,63 @@ export default function SubjectTeacherDashboard() {
                       setFilterStatus('All');
                       setFilterClass('All');
                       setFilterStudent('All');
+                      setFilterSubject('All');
                       setFilterPeriod('Semua');
                     }}
-                    className="w-full py-2.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200 uppercase tracking-widest"
+                    className="w-full py-2.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200 uppercase tracking-widest border border-gray-200 transition-all font-mono"
                    >
                      RESET FILTER
                    </button>
                 </div>
               </div>
 
-              <div className="overflow-x-auto border border-gray-100 rounded-xl shadow-inner bg-gray-50/30">
-                <table className="w-full min-w-[900px] border-collapse">
-                  <thead>
-                    <tr className="bg-white/80 border-b border-gray-100">
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50">Hari/Tgl</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50">Siswa</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50 text-center">Kelas</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50">Mapel</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50 text-center">Jam</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-50 text-center">Status</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {paginatedHistory.map((att, idx) => (
-                      <tr key={att.id} className={cn("hover:bg-blue-50/20 transition-colors bg-white/40", idx % 2 === 0 ? "" : "bg-gray-50/30")}>
-                        <td className="px-4 py-3 border-r border-gray-50/50">
-                           <p className="text-xs font-black text-gray-900">{att.date}</p>
-                        </td>
-                        <td className="px-4 py-3 border-r border-gray-50/50">
-                           <p className="text-xs font-bold text-gray-800">{att.studentName}</p>
-                        </td>
-                        <td className="px-4 py-3 border-r border-gray-50/50 text-center">
-                           <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md text-[10px] font-black uppercase">{att.className}</span>
-                        </td>
-                        <td className="px-4 py-3 border-r border-gray-50/50 text-xs font-bold text-gray-600">
-                           {att.subjectName}
-                        </td>
-                        <td className="px-4 py-3 border-r border-gray-50/50 text-center text-xs font-bold text-blue-600">
-                           {att.period}
-                        </td>
-                        <td className="px-4 py-3 border-r border-gray-50/50 text-center">
-                           <span className={cn(
-                             "px-2 py-0.5 rounded text-[10px] font-black uppercase",
-                             statusColors[att.status as keyof typeof statusColors]
-                           )}>
-                             {att.status === 'H' ? 'Hadir' : att.status === 'S' ? 'Sakit' : att.status === 'I' ? 'Izin' : att.status === 'D' ? 'Dispen' : 'Alpa'}
-                           </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <input 
-                            type="text"
-                            defaultValue={att.notes}
-                            onBlur={(e) => handleUpdateHistoryNotes(att.id, e.target.value)}
-                            className="w-full bg-transparent border-none text-[10px] italic text-gray-500 focus:ring-0 outline-none"
-                          />
-                        </td>
-                      </tr>
-                    ))}
+              {/* table */}
+              <div className="space-y-3">
+                  <div className="divide-y divide-gray-100">
+                    {paginatedHistory.map((att) => {
+                      const isExpanded = expandedIds.has(att.id);
+                      const statusText = att.status === 'H' ? 'Hadir' : att.status === 'S' ? 'Sakit' : att.status === 'I' ? 'Izin' : att.status === 'D' ? 'Dispen' : 'Alpa';
+                      
+                      return (
+                        <div key={att.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm transition-all mb-3">
+                          <div className="flex justify-between items-center cursor-pointer" onClick={() => toggleExpand(att.id)}>
+                            <div>
+                              <p className="font-bold text-sm text-gray-900">{att.studentName}</p>
+                              <p className="text-xs text-gray-400">{att.date} • {att.className}</p>
+                            </div>
+                            <div className="flex gap-3 items-center">
+                              <span className={cn(
+                                "px-2 py-1 rounded text-[10px] font-black uppercase",
+                                statusColors[att.status as keyof typeof statusColors]
+                              )}>
+                                {statusText}
+                              </span>
+                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                            </div>
+                          </div>
+                          {isExpanded && (
+                            <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-600 gap-2 flex flex-col">
+                              <p><span className="font-bold text-gray-400">Mapel:</span> {att.subjectName}</p>
+                              <p><span className="font-bold text-gray-400">Jam:</span> {att.period}</p>
+                              <div className="flex items-center gap-2">
+                                 <span className="font-bold text-gray-400">Catatan:</span>
+                                 <input 
+                                   type="text"
+                                   defaultValue={att.notes}
+                                   onBlur={(e) => handleUpdateHistoryNotes(att.id, e.target.value)}
+                                   className="flex-1 bg-gray-50 border-gray-200 rounded text-xs p-1 focus:ring-1 focus:ring-blue-500 outline-none"
+                                 />
+                              </div>
+                          </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     {paginatedHistory.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-20 text-center">
-                           <div className="flex flex-col items-center gap-2 opacity-30">
-                              <HelpCircle size={48} />
-                              <p className="text-sm font-bold uppercase tracking-widest">Tidak ada data absensi</p>
-                           </div>
-                        </td>
-                      </tr>
+                      <div className="p-20 text-center text-gray-400">
+                        Tidak ada riwayat absensi ditemukan.
+                      </div>
                     )}
-                  </tbody>
-                </table>
               </div>
 
               {totalHistoryPages > 1 && (

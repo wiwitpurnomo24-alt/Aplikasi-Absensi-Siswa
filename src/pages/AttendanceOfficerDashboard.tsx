@@ -26,6 +26,8 @@ export default function AttendanceOfficerDashboard() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [formData, setFormData] = useState<any>({});
   const [statusMessage, setStatusMessage] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [studentSearch, setStudentSearch] = useState('');
   const itemsPerPage = 12;
   const [officerPage, setOfficerPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
@@ -46,9 +48,11 @@ export default function AttendanceOfficerDashboard() {
 
   const filteredStudents = useMemo(() => {
     if (!newAttendance.className) return [];
-    return students.filter(s => s.className === newAttendance.className)
-      .sort((a,b) => (a.name || '').localeCompare(b.name || ''));
-  }, [students, newAttendance.className]);
+    return students.filter(s => 
+      s.className === newAttendance.className && 
+      (s.name || '').toLowerCase().includes(studentSearch.toLowerCase())
+    ).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+  }, [students, newAttendance.className, studentSearch]);
 
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
   const showConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({isOpen: true, message, onConfirm});
@@ -288,9 +292,29 @@ export default function AttendanceOfficerDashboard() {
 
   const handleAddAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrors({});
+    
+    // Client-side Validation
+    const newErrors: Record<string, string> = {};
+    if (!newAttendance.date) newErrors.date = 'Tanggal harus diisi';
+    if (!newAttendance.className) newErrors.className = 'Kelas harus dipilih';
+    if (!newAttendance.studentId) newErrors.studentId = 'Siswa harus dipilih';
+    if (!newAttendance.type) newErrors.type = 'Jenis absensi harus dipilih';
+    if (!newAttendance.reason || newAttendance.reason.trim().length < 5) {
+      newErrors.reason = 'Alasan harus diisi minimal 5 karakter';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
     try {
       const student = students.find(s => s.id === newAttendance.studentId);
-      if (!student) return;
+      if (!student) {
+        setErrors({ studentId: 'Siswa tidak ditemukan' });
+        return;
+      }
 
       await addDoc(getTenantCollection('attendance'), {
         studentId: student.id,
@@ -566,16 +590,22 @@ export default function AttendanceOfficerDashboard() {
                       <Calendar className="absolute left-3 top-3 text-gray-400" size={18} />
                       <input 
                         type="date"
-                        className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                        className={cn(
+                          "w-full pl-10 pr-3 py-2.5 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium transition-all",
+                          errors.date ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                        )}
                         value={newAttendance.date}
-                        onChange={e => setNewAttendance({ ...newAttendance, date: e.target.value })}
-                        required
+                        onChange={e => {
+                          setNewAttendance({ ...newAttendance, date: e.target.value });
+                          if (errors.date) setErrors(prev => ({ ...prev, date: '' }));
+                        }}
                       />
                     </div>
+                    {errors.date && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.date}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Hari</label>
-                    <div className="w-full px-3 py-2.5 bg-gray-100 border border-transparent rounded-xl font-bold text-gray-600">
+                    <div className="w-full px-4 py-2.5 bg-gray-100 border border-transparent rounded-xl font-bold text-gray-600 shadow-inner">
                       {selectedDay || '-'}
                     </div>
                   </div>
@@ -584,10 +614,16 @@ export default function AttendanceOfficerDashboard() {
                     <div className="relative">
                       <BookOpen className="absolute left-3 top-3 text-gray-400" size={18} />
                       <select 
-                        className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium"
+                        className={cn(
+                          "w-full pl-10 pr-3 py-2.5 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium transition-all",
+                          errors.className ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                        )}
                         value={newAttendance.className}
-                        onChange={e => setNewAttendance({ ...newAttendance, className: e.target.value, studentId: '' })}
-                        required
+                        onChange={e => {
+                          setNewAttendance({ ...newAttendance, className: e.target.value, studentId: '' });
+                          setStudentSearch('');
+                          if (errors.className) setErrors(prev => ({ ...prev, className: '' }));
+                        }}
                       >
                         <option value="">Pilih Kelas</option>
                         {classes.sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric: true})).map(c => (
@@ -595,38 +631,64 @@ export default function AttendanceOfficerDashboard() {
                         ))}
                       </select>
                     </div>
+                    {errors.className && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.className}</p>}
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nama Siswa</label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 text-gray-400" size={18} />
-                      <select 
-                        className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium"
-                        value={newAttendance.studentId}
-                        onChange={e => setNewAttendance({ ...newAttendance, studentId: e.target.value })}
-                        required
-                        disabled={!newAttendance.className}
-                      >
-                        <option value="">Pilih Siswa</option>
-                        {filteredStudents.map(s => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                      </select>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Cari & Pilih Nama Siswa</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="relative">
+                        <Users className="absolute left-3 top-3 text-gray-400" size={18} />
+                        <input 
+                          type="text"
+                          placeholder="Ketik nama untuk mencari..."
+                          className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                          value={studentSearch}
+                          onChange={e => setStudentSearch(e.target.value)}
+                          disabled={!newAttendance.className}
+                        />
+                      </div>
+                      <div className="relative">
+                        <User className="absolute left-3 top-3 text-gray-400" size={18} />
+                        <select 
+                          className={cn(
+                            "w-full pl-10 pr-3 py-2.5 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium transition-all",
+                            errors.studentId ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                          )}
+                          value={newAttendance.studentId}
+                          onChange={e => {
+                            setNewAttendance({ ...newAttendance, studentId: e.target.value });
+                            if (errors.studentId) setErrors(prev => ({ ...prev, studentId: '' }));
+                          }}
+                          disabled={!newAttendance.className}
+                        >
+                          <option value="">Pilih Siswa ({filteredStudents.length})</option>
+                          {filteredStudents.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
+                    {errors.studentId && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.studentId}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Jenis Absensi</label>
                     <select 
-                      className="w-full px-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                      className={cn(
+                        "w-full px-3 py-2.5 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium transition-all",
+                        errors.type ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                      )}
                       value={newAttendance.type}
-                      onChange={e => setNewAttendance({ ...newAttendance, type: e.target.value as any })}
-                      required
+                      onChange={e => {
+                        setNewAttendance({ ...newAttendance, type: e.target.value as any });
+                        if (errors.type) setErrors(prev => ({ ...prev, type: '' }));
+                      }}
                     >
                       <option value="Sakit">Sakit</option>
                       <option value="Izin">Izin</option>
                       <option value="Dispensasi">Dispensasi</option>
                       <option value="Alpa">Alpa</option>
                     </select>
+                    {errors.type && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.type}</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Petugas</label>
@@ -639,13 +701,19 @@ export default function AttendanceOfficerDashboard() {
                     <div className="relative">
                       <MessageSquare className="absolute left-3 top-3 text-gray-400" size={18} />
                       <textarea 
-                        className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] font-medium"
+                        className={cn(
+                          "w-full pl-10 pr-3 py-2.5 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] font-medium transition-all resize-none",
+                          errors.reason ? "border-red-300 ring-1 ring-red-300" : "border-gray-100"
+                        )}
                         value={newAttendance.reason}
-                        onChange={e => setNewAttendance({ ...newAttendance, reason: e.target.value })}
+                        onChange={e => {
+                          setNewAttendance({ ...newAttendance, reason: e.target.value });
+                          if (errors.reason) setErrors(prev => ({ ...prev, reason: '' }));
+                        }}
                         placeholder="Berikan alasan atau keterangan tambahan..."
-                        required
                       />
                     </div>
+                    {errors.reason && <p className="mt-1 text-[10px] font-bold text-red-500 uppercase tracking-wider">{errors.reason}</p>}
                   </div>
                   <div className="md:col-span-2 lg:col-span-3 flex justify-end">
                     <button 

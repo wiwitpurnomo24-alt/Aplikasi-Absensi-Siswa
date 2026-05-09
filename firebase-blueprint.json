@@ -151,13 +151,24 @@
       },
       "required": ["studentId", "type", "timestamp"]
     },
+    "Theme": {
+      "title": "School Theme",
+      "description": "Custom color theme for the dashboard",
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" }
+      },
+      "required": ["primaryColor", "secondaryColor"]
+    },
     "SchoolConfig": {
       "title": "School Config",
       "description": "School operational configuration",
       "type": "object",
       "properties": {
         "entryTime": { "type": "string" },
-        "departureTime": { "type": "string" }
+        "departureTime": { "type": "string" },
+        "theme": { "$ref": "Theme" }
       }
     }
   },
