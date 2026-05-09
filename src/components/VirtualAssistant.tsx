@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, Send, X, User, Bot, Loader2, Sparkles } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { MessageSquare, Send, X, User, Bot, Loader2 } from 'lucide-react';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export default function VirtualAssistant() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<{ id: string, role: 'user' | 'assistant', content: string }[]>([
-    { id: 'init-msg', role: 'assistant', content: 'Halo! Saya Duta, asisten virtual SIAGA. Ada yang bisa saya bantu terkait penggunaan aplikasi absensi sekolah ini?' }
+    { id: 'init-msg', role: 'assistant', content: 'Halo! Saya Asisten Absensi Sekolah. Ada yang bisa saya bantu terkait penggunaan aplikasi ini?' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -30,25 +30,24 @@ export default function VirtualAssistant() {
     setIsLoading(true);
 
     try {
-      const response = await ai.models.generateContent({
+      const model = genAI.getGenerativeModel({ 
         model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: "Nama: Duta. Identitas: Maskot asisten virtual SIAGA (Sistem Informasi Administrasi Giat Absensi) SMPN 2 Magelang. Karakter: Bersemangat, tegas, profesional, namun tetap ramah dan membantu. Tugas: Membantu Bapak/Ibu Guru, Orang Tua, dan Siswa dalam mengoperasikan fitur-fitur aplikasi seperti presensi harian, laporan kehadiran, manajemen data sekolah, dan notifikasi. Bahasa: Indonesia yang santun. Hindari jawaban yang terlalu teknis jika tidak ditanya. Jadilah asisten yang solutif."
-        },
-        contents: [
-          ...messages.map(m => ({
-            role: m.role === 'assistant' ? 'model' : 'user' as any,
-            parts: [{ text: m.content }],
-          })),
-          { role: 'user', parts: [{ text: userMessage }] }
-        ],
+        systemInstruction: "Nama: Asisten Absensi Sekolah. Fungsi: Membantu pengguna (Orang Tua, Wali Kelas, Admin) menggunakan aplikasi Absensi SMPN 2 Magelang. Gaya bahasa: Sopan, jelas, informatif (Bahasa Indonesia). Anda adalah asisten profesional yang sabar.",
       });
 
-      const assistantMessage = response.text || "Maaf, saya sedang tidak dapat berpikir dengan jernih. Bisa diulangi?";
+      const chat = model.startChat({
+        history: messages.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+      });
+
+      const result = await chat.sendMessage(userMessage);
+      const assistantMessage = result.response.text() || "Maaf, saya tidak dapat merespons saat ini.";
       setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: assistantMessage }]);
     } catch (error) {
       console.error("Gemini Error:", error);
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: "Maaf, terjadi gangguan koneksi dengan sistem AI Duta. Silakan coba lagi nanti." }]);
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: "Maaf, terjadi kesalahan pada sistem asisten virtual." }]);
     } finally {
       setIsLoading(false);
     }
@@ -57,35 +56,14 @@ export default function VirtualAssistant() {
   return (
     <>
       {/* Trigger Button */}
-      <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 z-50">
-        <AnimatePresence>
-          {!isOpen && (
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              className="bg-white px-3 py-1.5 rounded-xl shadow-lg border border-blue-100 text-[10px] font-black text-blue-700 uppercase tracking-widest pointer-events-none"
-            >
-              Tanya Duta 👋
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <motion.button
-          whileHover={{ scale: 1.05, rotate: 5 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setIsOpen(true)}
-          className="w-14 h-14 bg-gradient-to-tr from-blue-700 to-blue-500 text-white rounded-full flex items-center justify-center shadow-xl hover:shadow-blue-200 transition-all border-2 border-white"
-        >
-          <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center p-1 shadow-inner overflow-hidden">
-             <img 
-               src="https://api.dicebear.com/7.x/avataaars/svg?seed=Duta&backgroundColor=b6e3f4&skinColor=ffdbb4&clothing=suitAndTie&clothingColor=3c91e6&topType=shortHair&hairColor=2c1b18" 
-               alt="Duta" 
-               className="w-full h-full object-contain"
-               referrerPolicy="no-referrer"
-             />
-          </div>
-        </motion.button>
-      </div>
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => setIsOpen(true)}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors z-50"
+      >
+        <MessageSquare size={28} />
+      </motion.button>
 
       {/* Chat Window */}
       <AnimatePresence>
@@ -97,29 +75,17 @@ export default function VirtualAssistant() {
             className="fixed bottom-24 right-6 w-96 max-w-[calc(100vw-3rem)] h-[500px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-gray-100 z-50"
           >
             {/* Header */}
-            <div className="p-4 bg-gradient-to-r from-blue-700 to-blue-600 text-white flex items-center justify-between shadow-md">
+            <div className="p-4 bg-blue-600 text-white flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center p-1 shadow-inner overflow-hidden">
-                  <img 
-                    src="https://api.dicebear.com/7.x/avataaars/svg?seed=Duta&backgroundColor=b6e3f4&skinColor=ffdbb4&clothing=suitAndTie&clothingColor=3c91e6&topType=shortHair&hairColor=2c1b18" 
-                    alt="Duta" 
-                    className="w-full h-full object-contain"
-                    referrerPolicy="no-referrer"
-                  />
+                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                  <Bot size={24} />
                 </div>
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-sm font-black tracking-tight">DUTA AI</h3>
-                    <Sparkles size={12} className="text-yellow-300" />
-                  </div>
-                  <p className="text-[10px] text-blue-100 font-medium">Asisten Virtual SIAGA</p>
+                  <h3 className="text-sm font-bold">Asisten Absensi</h3>
+                  <p className="text-[10px] text-blue-100">Aktif Sekarang</p>
                 </div>
               </div>
-              <button 
-                onClick={() => setIsOpen(false)} 
-                className="hover:bg-white/10 p-1.5 rounded-lg transition-colors"
-                title="Tutup Chat"
-              >
+              <button onClick={() => setIsOpen(false)} className="hover:bg-white/10 p-1 rounded-lg">
                 <X size={20} />
               </button>
             </div>
