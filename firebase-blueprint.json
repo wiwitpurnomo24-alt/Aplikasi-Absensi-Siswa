@@ -65,13 +65,22 @@
       "type": "object",
       "properties": {
         "subjectTeacherName": { "type": "string" },
+        "subjectTeacherId": { "type": "string" },
         "subjectName": { "type": "string" },
         "className": { "type": "string" },
         "studentId": { "type": "string" },
         "studentName": { "type": "string" },
-        "status": { "enum": ["Unconfirmed", "Found", "Excused"] },
+        "status": { "enum": ["Menunggu", "Dijawab"] },
         "message": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "response": { "type": "string" },
+        "respondedBy": { "type": "string" },
+        "respondedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "date": { "type": "string" },
+        "day": { "type": "string" },
+        "time": { "type": "string" },
+        "period": { "type": "string" },
+        "replies": { "type": "array" }
       }
     },
     "SchoolData": {
@@ -128,12 +137,15 @@
         "className": { "type": "string" },
         "studentName": { "type": "string" },
         "studentId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "subjectName": { "type": "string" },
         "message": { "type": "string" },
         "title": { "type": "string" },
         "read": { "type": "boolean" },
         "type": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
-        "targetRole": { "type": "string" }
+        "targetRole": { "type": "string" },
+        "targetUserId": { "type": "string" }
       }
     },
     "SchoolPresence": {
@@ -150,6 +162,38 @@
         "activityName": { "type": "string" }
       },
       "required": ["studentId", "type", "timestamp"]
+    },
+    "Tugas": {
+      "title": "Tugas (Task)",
+      "description": "Assignments or tasks given by teachers",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "dueDate": { "type": "string", "format": "date" },
+        "status": { "enum": ["Aktif", "Selesai", "Terlambat"] },
+        "className": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "dueDate", "className", "teacherId"]
+    },
+    "AcademicCalendar": {
+      "title": "Academic Calendar Event",
+      "description": "Information about school events, holidays, and deadlines",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "type": { "enum": ["Libur", "Acara", "Ujian", "Raport", "Lainnya"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "startDate", "type"]
     },
     "SchoolConfig": {
       "title": "School Config",
@@ -215,6 +259,14 @@
     "/notifications/{id}": {
       "schema": "Notification",
       "description": "System notifications"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Tugas",
+      "description": "Assignments given by teachers to classes"
+    },
+    "/academicCalendar/{id}": {
+      "schema": "AcademicCalendar",
+      "description": "Collection of academic calendar events"
     },
     "/counselors/{counselorId}": {
       "schema": {

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { School, UserCircle, LogIn, ShieldCheck, ArrowRight, Eye, EyeOff, Scan, X, Camera, CheckCircle2, BarChart3, Clock, Bell, Book } from 'lucide-react';
 import { useAuthStore } from '../lib/auth-store';
-import { db, auth, handleFirestoreError } from '../lib/firebase';
+import { db, auth, handleFirestoreError, firebaseConfigInfo } from '../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, signInAnonymously, updateProfile } from 'firebase/auth';
 import { cn } from '../lib/utils';
@@ -209,6 +209,12 @@ export default function Login() {
     const normalizedId = id.trim();
     const normalizedPassword = password.trim();
 
+    if (!schoolCode.trim()) {
+        setError('KODE SEKOLAH BELUM DIISI');
+        setLoading(false);
+        return;
+    }
+
     try {
         const response = await fetch('/api/login', {
           method: 'POST',
@@ -244,28 +250,27 @@ export default function Login() {
             if (roles.length === 0) roles.push('TEACHER');
 
             // Sign in anonymously to Firebase
-            if (!auth.currentUser) {
-                try {
-                    const anonResult = await signInAnonymously(auth);
-                    await setDoc(getTenantDoc('users', anonResult.user.uid), {
-                        role: roles.includes('ADMIN') ? 'ADMIN' : (roles.includes('TEACHER') ? 'TEACHER' : (roles.includes('COUNSELOR') ? 'COUNSELOR' : (roles.includes('SUBJECT_TEACHER') ? 'SUBJECT_TEACHER' : 'GUEST'))),
-                        nip: normalizedId,
-                        name: teacherData.name,
-                        updatedAt: serverTimestamp()
-                    });
-                } catch (anonErr: any) {
-                    console.error("Anonymous authentication failed:", anonErr);
-                    if (anonErr.code === 'auth/admin-restricted-operation' || anonErr.code === 'auth/operation-not-allowed') {
-                        throw new Error('Firebase Anonymous Login is disabled. Silahkan aktifkan "Anonymous Auth" di Firebase Console (Authentication -> Sign-in methods).');
-                    }
-                }
+            try {
+                const anonResult = await signInAnonymously(auth);
+                await setDoc(getTenantDoc('users', anonResult.user.uid), {
+                    role: roles.includes('ADMIN') ? 'ADMIN' : (roles.includes('TEACHER') ? 'TEACHER' : (roles.includes('COUNSELOR') ? 'COUNSELOR' : (roles.includes('SUBJECT_TEACHER') ? 'SUBJECT_TEACHER' : 'GUEST'))),
+                    id: teacherData.id,
+                    nip: normalizedId,
+                    name: teacherData.name,
+                    schoolId: schoolCode.toLowerCase(),
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
+            } catch (anonErr: any) {
+                console.error("Anonymous authentication failed or profile sync failed:", anonErr);
+                // Continue if user already authenticated locally
+                if (!auth.currentUser) throw anonErr;
             }
 
             login({
                 uid: teacherData.id,
                 role: roles[0],
                 roles: roles,
-                schoolId: schoolCode,
+                schoolId: schoolCode.toLowerCase(),
                 nip: normalizedId,
                 name: teacherData.name,
                 className: teacherData.className,
@@ -288,28 +293,25 @@ export default function Login() {
               activeRole = 'PETUGAS_ABSEN_KELAS';
             }
 
-            if (!auth.currentUser) {
-                try {
-                    const anonResult = await signInAnonymously(auth);
-                    await setDoc(getTenantDoc('users', anonResult.user.uid), {
-                        role: activeRole,
-                        nis: studentData.nis || normalizedId,
-                        name: studentData.name,
-                        updatedAt: serverTimestamp()
-                    });
-                } catch (anonErr: any) {
-                    console.error("Anonymous authentication failed:", anonErr);
-                    if (anonErr.code === 'auth/admin-restricted-operation' || anonErr.code === 'auth/operation-not-allowed') {
-                        throw new Error('Firebase Anonymous Login is disabled. Silahkan aktifkan "Anonymous Auth" di Firebase Console (Authentication -> Sign-in methods).');
-                    }
-                }
+            try {
+                const anonResult = await signInAnonymously(auth);
+                await setDoc(getTenantDoc('users', anonResult.user.uid), {
+                    role: activeRole,
+                    nis: studentData.nis || normalizedId,
+                    name: studentData.name,
+                    schoolId: schoolCode.toLowerCase(),
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
+            } catch (anonErr: any) {
+                console.error("Anonymous authentication failed or profile sync failed:", anonErr);
+                if (!auth.currentUser) throw anonErr;
             }
 
             login({
                 uid: studentData.id,
                 role: activeRole,
                 roles: roles,
-                schoolId: schoolCode,
+                schoolId: schoolCode.toLowerCase(),
                 nis: studentData.nis || normalizedId,
                 name: studentData.name,
                 className: studentData.className
@@ -336,7 +338,7 @@ export default function Login() {
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">SIAGA</h1>
-              <p className="text-blue-200 text-sm font-medium">Sistem Informasi Administrasi Giat Absensi</p>
+              <p className="text-blue-200 text-sm font-medium">Sistem Informasi Absensi Selalu Terjaga</p>
             </div>
           </div>
           
@@ -346,7 +348,7 @@ export default function Login() {
           <ul className="space-y-6 text-blue-50 text-lg max-w-md">
             <li className="flex items-start gap-4">
                 <CheckCircle2 className="mt-1 text-blue-400 flex-shrink-0" size={20} />
-                <span>Monitoring kehadiran siswa dan guru real-time</span>
+                <span>Monitoring kehadiran siswa dan absensi siswa secara real-time</span>
             </li>
             <li className="flex items-start gap-4">
                 <BarChart3 className="mt-1 text-blue-400 flex-shrink-0" size={20} />
@@ -364,7 +366,7 @@ export default function Login() {
         </div>
 
         <div className="relative z-10 text-blue-200/50 text-xs font-bold uppercase tracking-widest">
-            © 2026 SIAGA | Sistem Informasi Administrasi Giat Absensi
+            © 2026 SIAGA | Sistem Informasi Absensi Selalu Terjaga
         </div>
 
         {/* Decorative elements */}
@@ -397,7 +399,7 @@ export default function Login() {
           <form onSubmit={handleLogin} className="space-y-5">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">
-                Kode Sekolah (NPSN)
+                Kode Sekolah
               </label>
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-600 transition-colors">
@@ -416,7 +418,7 @@ export default function Login() {
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">
-                Username (NIP / NIS)
+                Username
               </label>
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-blue-600 transition-colors">

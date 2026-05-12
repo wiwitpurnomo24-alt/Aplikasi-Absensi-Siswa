@@ -1,35 +1,32 @@
-# Security Specification - SIADPV SMPN 2 Magelang
+# Security Specification - SIAGA
 
-## 1. Data Invariants
-- **Students**: Every student must have a unique NIS and belong to a valid class.
-- **Attendance**: 
-    - Every attendance record must reference a valid `studentId`.
-    - `type` must be one of ['Sakit', 'Izin', 'Dispensasi'].
-    - `status` must transition from 'Pending' to either 'Approved' or 'Rejected' by an Admin/Counselor.
-    - Parents can create records but not update them once processed.
-- **Counselors**: Manage specific classes; they should only be able to view and process attendance for their `managedClasses`.
-- **Admins**: Have full access to all master data and attendance records.
+## Data Invariants
+1. **School Isolation**: A user can only access data belonging to their `schoolId`.
+2. **Role-Based Access**: 
+   - `ADMIN`: Full access to school data.
+   - `TEACHER`: Manage students, attendance, tasks, and inquiries in their school.
+   - `SUBJECT_TEACHER`: Record attendance for their subjects, manage tasks, and send inquiries to Wali Kelas.
+   - `COUNSELOR`: Access attendance and alerts for their managed classes.
+   - `PETUGAS_ABSEN_KELAS`: Record school presence.
+   - `PARENT`: View attendance and tasks for their own child.
+3. **Immutability**: `createdAt` and `ownerId`/`teacherId` fields should be immutable once set.
+4. **Valid IDs**: All document IDs and reference IDs must be valid strings.
 
-## 2. The "Dirty Dozen" Payloads (Targeting Logic Leaks)
+## The Dirty Dozen Payloads
+1. **Unauthorized School Access**: A user from `schoolA` tries to read `schools/schoolB/students/student1`.
+2. **Privilege Escalation**: A `PARENT` tries to update `schools/schoolA/attendance/att1` to "Approved".
+3. **Data Integrity Violation**: A `TEACHER` tries to create a `subjectAttendance` record without a `studentId`.
+4. **Identity Spoofing**: A user tries to create a `subjectInquiry` where `subjectTeacherId` is not their own `auth.uid`.
+5. **PII Leak**: A `SUBJECT_TEACHER` tries to read `schools/schoolA/student_pii/student1`.
+6. **Shadow Update**: A user tries to add an `isAdmin: true` field to their `users` document.
+7. **Terminal State Bypass**: A user tries to change a "Sudah di Jawab" inquiry back to "Menunggu".
+8. **Resource Exhaustion**: A user tries to inject a 1MB string into the `notes` field of an attendance record.
+9. **Orphaned Writes**: A user tries to create a task for a `className` that doesn't exist in the library.
+10. **Query Scraping**: A `PARENT` tries to `list` all attendance records in the school without an `auth.uid` filter.
+11. **Timestamp Forgery**: A user tries to set `createdAt` to a date in the future instead of `request.time`.
+12. **Recursive Cost Attack**: A malicious query that forces many cross-collection `get()` calls in a loop.
 
-1. **Identity Spoofing**: Logged-in parent tries to submit attendance for a student they don't own by changing `studentId`.
-2. **Privilege Escalation**: Non-admin user tries to create a document in the `admins` collection.
-3. **State Shortcutting**: Parent tries to create an attendance record with `status: 'Approved'`.
-4. **Outcome Reversal**: Once an attendance record is 'Rejected', a counselor tries to change it back to 'Pending' (Violation of terminal state locking).
-5. **PII Leak**: Unauthorized user tries to fetch the list of all parent phone numbers.
-6. **Resource Poisoning**: Attacker tries to inject 1MB of junk characters into the `studentId` field.
-7. **Bypassing Validation**: Submitting an attendance record with an invalid `type` (e.g., 'Bolos').
-8. **Shadow Field Injection**: Adding `isVerified: true` to a student document during update.
-9. **Relational Sync Breakage**: Creating an attendance record for a non-existent student ID.
-10. **Timestamp Spoofing**: Sending a `submittedAt` from 2 hours in the future.
-11. **Immortality Breach**: Modifying `createdAt` or `originalOwnerId` after document creation.
-12. **Query Scraper**: Attempting to list all `attendance` records without signing in (depending on whether list is restricted).
-
-## 3. Test Cases (TDD)
-(These will be verified in `firestore.rules.test.ts` implementation)
-- [FAIL] create /admins/{anyId} by any user
-- [FAIL] update /attendance/{id} with `status: 'Approved'` by a non-admin
-- [FAIL] create /students/{id} by a parent
-- [FAIL] update /students/{id} by changing `nis`
-- [PASS] create /attendance/{id} by a parent with `status: 'Pending'`
-- [PASS] update /attendance/{id} by admin to change status
+## Test Cases Plan
+- Verify that only admins can delete records.
+- Verify that `subjectInquiry` replies can only be added by the Wali Kelas or Admin.
+- Verify that `read` operations for students return list results only if the user is authenticated and part of that school.

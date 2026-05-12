@@ -12,12 +12,15 @@ import {
   Book,
   School,
   CheckCircle2,
-  GraduationCap
+  GraduationCap,
+  Globe,
+  Smartphone
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
 type GuideRole = 
+  | 'akses_instalasi'
   | 'admin' 
   | 'wali_kelas' 
   | 'guru_mapel' 
@@ -39,6 +42,43 @@ interface GuideData {
 }
 
 const guides: GuideData[] = [
+  {
+    id: 'akses_instalasi',
+    title: 'Akses & Instalasi',
+    icon: <Globe size={24} />,
+    color: 'text-sky-600',
+    bgColor: 'bg-sky-50',
+    sections: [
+      {
+        title: 'Link Aplikasi',
+        content: [
+          'Aplikasi dapat diakses melalui link resmi: https://ais-pre-fgjhyr5umdhojhzdasfkzz-16805158668.asia-east1.run.app',
+          'Pastikan Anda menggunakan akun yang telah didaftarkan oleh Administrator untuk dapat mengakses fitur penuh.',
+          'Bagikan link ini kepada guru, wali murid, dan petugas yang berkepentingan.'
+        ]
+      },
+      {
+        title: 'Instalasi di PC / Laptop',
+        content: [
+          'Buka browser Google Chrome atau Microsoft Edge di komputer Anda.',
+          'Kunjungi alamat link aplikasi di atas.',
+          'Klik ikon "Install" (tanda + di dalam kotak) yang muncul di pojok kanan Address Bar browser.',
+          'Atau pilih menu titik tiga (Chrome) > Save and Share > Install page as app...',
+          'Aplikasi akan muncul sebagai pintasan di Desktop dan Taskbar (seperti aplikasi terinstall).'
+        ]
+      },
+      {
+        title: 'Instalasi di Smartphone (HP)',
+        content: [
+          'Buka browser (Chrome/Safari/Samsung Internet) di HP Anda.',
+          'Kunjungi alamat link aplikasi di atas.',
+          'Android (Chrome): Klik titik tiga di pojok kanan atas, lalu pilih "Instal Aplikasi" atau "Tambah ke Layar Utama".',
+          'iOS/iPhone (Safari): Klik tombol "Share" (kotak dengan panah ke atas) di bagian bawah, lalu scroll dan pilih "Add to Home Screen".',
+          'Ikon aplikasi akan muncul di layar utama HP Anda dan dapat diakses tanpa perlu mengetik link lagi.'
+        ]
+      }
+    ]
+  },
   {
     id: 'admin',
     title: 'Administrator',
@@ -216,7 +256,7 @@ const guides: GuideData[] = [
 
 export default function UserGuide() {
   const navigate = useNavigate();
-  const [activeGuide, setActiveGuide] = useState<GuideRole>('admin');
+  const [activeGuide, setActiveGuide] = useState<GuideRole>('akses_instalasi');
 
   const currentGuideData = guides.find(g => g.id === activeGuide)!;
 
@@ -278,7 +318,7 @@ export default function UserGuide() {
                         "p-1.5 rounded-xl", 
                         isActive ? "bg-white shadow-sm" : "bg-gray-100"
                       )}>
-                        {React.cloneElement(guide.icon as React.ReactElement, { size: 18 })}
+                        {React.cloneElement(guide.icon as any, { size: 18 })}
                       </div>
                       <span className="text-sm">{guide.title}</span>
                     </div>
@@ -305,7 +345,7 @@ export default function UserGuide() {
               <div className={cn("px-8 py-10", currentGuideData.bgColor)}>
                 <div className="flex flex-col md:flex-row md:items-center gap-6">
                   <div className={cn("w-20 h-20 rounded-2xl bg-white shadow-lg flex items-center justify-center shrink-0", currentGuideData.color)}>
-                    {React.cloneElement(currentGuideData.icon as React.ReactElement, { size: 40 })}
+                    {React.cloneElement(currentGuideData.icon as any, { size: 40 })}
                   </div>
                   <div>
                     <h2 className={cn("text-3xl font-extrabold tracking-tight mb-2", currentGuideData.color)}>

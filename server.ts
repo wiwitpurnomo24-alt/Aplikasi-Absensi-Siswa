@@ -203,6 +203,16 @@ async function startServer() {
       });
 
       await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
+        targetRole: 'PARENT',
+        studentId: studentId,
+        studentName: studentName,
+        title: 'Pengajuan Izin Terkirim',
+        message: `Pengajuan izin ${type} untuk ${studentName} pada tanggal ${dateString} telah terkirim dan sedang menunggu verifikasi Wali Kelas.`,
+        read: false,
+        createdAt: Timestamp.now()
+      });
+
+      await addDoc(collection(db, getCollectionPath(schoolId, 'notifications')), {
         targetRole: 'ADMIN',
         studentName: studentName,
         className: className,

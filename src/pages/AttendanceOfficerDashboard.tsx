@@ -7,7 +7,7 @@ import { collection, query, orderBy, onSnapshot, doc, deleteDoc, updateDoc, wher
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
 import { AttendanceRecord, Student, SchoolClass } from '../types';
 import AttendanceRecapTable from '../components/AttendanceRecapTable';
-import { ClipboardList, FileText, Edit, Trash2, X, Users, AlertCircle, Plus, Calendar, User, BookOpen, MessageSquare, Download } from 'lucide-react';
+import { ClipboardList, FileText, Edit, Trash2, X, Users, AlertCircle, Plus, Calendar, User, BookOpen, MessageSquare, Download, ChevronUp, ChevronDown, ArrowUpDown, MapPin, Clock } from 'lucide-react';
 import { cn, formatDate } from '../lib/utils';
 import { useAuthStore } from '../lib/auth-store';
 import { generateQRCodeDataUrl } from '../services/pdfService';
@@ -27,6 +27,8 @@ export default function AttendanceOfficerDashboard() {
   const [formData, setFormData] = useState<any>({});
   const [statusMessage, setStatusMessage] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [sortConfig, setSortConfig] = useState<{ key: 'date' | 'type' | 'studentName'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
+  
   const [studentSearch, setStudentSearch] = useState('');
   const itemsPerPage = 12;
   const [officerPage, setOfficerPage] = useState(1);
@@ -229,15 +231,25 @@ export default function AttendanceOfficerDashboard() {
 
   const sortedAttendance = useMemo(() => {
     return [...attendance].sort((a,b) => {
-        const timeA = a.submittedAt?.seconds || 0;
-        const timeB = b.submittedAt?.seconds || 0;
-        if (timeA !== timeB) return timeB - timeA;
+        const key = sortConfig.key;
+        const direction = sortConfig.direction === 'asc' ? 1 : -1;
         
-        const dateA = a.date ? new Date(a.date).getTime() : 0;
-        const dateB = b.date ? new Date(b.date).getTime() : 0;
-        return dateB - dateA;
+        if (key === 'date') {
+          const dateA = a.date ? new Date(a.date).getTime() : 0;
+          const dateB = b.date ? new Date(b.date).getTime() : 0;
+          if (dateA !== dateB) return (dateA - dateB) * direction;
+          
+          // Fallback to submittedAt
+          const timeA = a.submittedAt?.seconds || 0;
+          const timeB = b.submittedAt?.seconds || 0;
+          return (timeA - timeB) * direction;
+        }
+        
+        const valA = String(a[key] || '').toLowerCase();
+        const valB = String(b[key] || '').toLowerCase();
+        return valA.localeCompare(valB) * direction;
     });
-  }, [attendance]);
+  }, [attendance, sortConfig]);
 
   const paginatedHistory = useMemo(() => {
     const startIndex = (historyPage - 1) * itemsPerPage;
@@ -731,10 +743,55 @@ export default function AttendanceOfficerDashboard() {
               <table className="w-full text-left min-w-[800px] border border-gray-100 shadow-sm rounded-xl overflow-hidden">
                 <thead className="bg-gray-50/80">
                   <tr className="border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500">
-                    <th className="px-6 py-4">Siswa</th>
+                    <th 
+                      className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        setSortConfig({
+                          key: 'studentName',
+                          direction: sortConfig.key === 'studentName' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                        });
+                      }}
+                    >
+                      <div className="flex items-center gap-1">
+                        Siswa
+                        {sortConfig.key === 'studentName' ? (
+                          sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                        ) : <ArrowUpDown size={12} className="opacity-30" />}
+                      </div>
+                    </th>
                     <th className="px-6 py-4">Kelas</th>
-                    <th className="px-6 py-4">Hari / Tanggal</th>
-                    <th className="px-6 py-4 text-center">Jenis</th>
+                    <th 
+                      className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        setSortConfig({
+                          key: 'date',
+                          direction: sortConfig.key === 'date' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                        });
+                      }}
+                    >
+                      <div className="flex items-center gap-1">
+                        Hari / Tanggal
+                        {sortConfig.key === 'date' ? (
+                          sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                        ) : <ArrowUpDown size={12} className="opacity-30" />}
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-4 text-center cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        setSortConfig({
+                          key: 'type',
+                          direction: sortConfig.key === 'type' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                        });
+                      }}
+                    >
+                       <div className="flex items-center justify-center gap-1">
+                        Jenis
+                        {sortConfig.key === 'type' ? (
+                          sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                        ) : <ArrowUpDown size={12} className="opacity-30" />}
+                      </div>
+                    </th>
                     <th className="px-6 py-4">Petugas</th>
                     <th className="px-6 py-4 text-center">Aksi</th>
                   </tr>

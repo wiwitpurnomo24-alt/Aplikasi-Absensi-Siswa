@@ -242,7 +242,7 @@ export default function SubjectAttendanceRecapTable({
             </tr>
             <tr className="bg-gray-50">
               {daysArray.map(day => (
-                <th key={day} className="p-1 border border-gray-200 text-[9px] font-bold text-gray-600 text-center w-7 bg-blue-50/50">
+                <th key={`subject-recap-${day}`} className="p-1 border border-gray-200 text-[9px] font-bold text-gray-600 text-center w-7 bg-blue-50/50">
                   {day}
                 </th>
               ))}
@@ -263,7 +263,7 @@ export default function SubjectAttendanceRecapTable({
                 {daysArray.map(day => {
                   const status = student.dayMap[day];
                   return (
-                    <td key={day} className={cn(
+                    <td key={`subject-recap-${student.id}-${day}`} className={cn(
                       "p-1 border border-gray-200 text-[9px] text-center font-bold",
                       status === 'H' ? 'text-green-600 bg-green-50/30' :
                       status === 'S' ? 'text-orange-600 bg-orange-50/30' :

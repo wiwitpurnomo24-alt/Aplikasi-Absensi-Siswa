@@ -56,7 +56,7 @@ export const SchoolPresenceDashboard: React.FC = () => {
         return () => { unsubscribePresence(); unsubscribeStudents(); };
     }, []);
 
-    const classes = useMemo(() => Array.from(new Set(students.map(s => s.className))), [students]);
+    const classes = useMemo(() => Array.from(new Set(students.map(s => s.className))).map(name => ({ id: name, name })), [students]);
     const studentList = useMemo(() => students.filter(s => filterClass === '' || s.className === filterClass), [students, filterClass]);
 
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'timestamp', direction: 'desc' });
@@ -512,7 +512,7 @@ export const SchoolPresenceDashboard: React.FC = () => {
                 </div>
             </div>
 
-            <AttendanceConfig />
+            <AttendanceConfig classes={classes} />
             
             <div className="flex items-center gap-1 bg-gray-100/50 p-1 rounded-2xl w-fit">
                 <button 
@@ -578,7 +578,7 @@ export const SchoolPresenceDashboard: React.FC = () => {
                         </select>
                         <select value={filterClass} onChange={(e) => { setFilterClass(e.target.value); setFilterStudent(''); }} className="p-1.5 border rounded text-[10px]">
                             <option value="">Semua Kelas</option>
-                            {classes.map(c => <option key={`class-filter-${c}`} value={c}>{c}</option>)}
+                            {classes.map(c => <option key={`class-filter-${c.id}`} value={c.name}>{c.name}</option>)}
                         </select>
                         <select value={filterStudent} onChange={(e) => setFilterStudent(e.target.value)} className="p-1.5 border rounded text-[10px]">
                             <option value="">Semua Siswa</option>

@@ -22,7 +22,8 @@ import {
   Bell,
   BellRing,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  ArrowUpDown
 } from 'lucide-react';
 import { db, auth, handleFirestoreError, storage } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -42,6 +43,7 @@ import {
 import { formatDate, getDayName, cn } from '../lib/utils';
 import { ParentAttendanceReport } from '../components/ParentAttendanceReport';
 import { AttendanceRecord, Student } from '../types';
+import SimpleNotification from '../components/SimpleNotification';
 import { getTenantCollection, getTenantDoc, getSchoolCode } from '../lib/tenant';
 
 export default function ParentDashboard() {
@@ -50,8 +52,29 @@ export default function ParentDashboard() {
   const [student, setStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<AttendanceRecord[]>([]);
+  const [sortConfig, setSortConfig] = useState<{ key: 'date' | 'type' | 'status'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
+
+  const sortedHistory = React.useMemo(() => {
+    return [...history].sort((a, b) => {
+      const key = sortConfig.key;
+      const direction = sortConfig.direction === 'asc' ? 1 : -1;
+      
+      if (key === 'date') {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return (dateA - dateB) * direction;
+      }
+      
+      const valA = String(a[key] || '').toLowerCase();
+      const valB = String(b[key] || '').toLowerCase();
+      return valA.localeCompare(valB) * direction;
+    });
+  }, [history, sortConfig]);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [toastNotif, setToastNotif] = useState<{title: string, message: string} | null>(null);
+  const isInitialNotif = React.useRef(true);
   const [success, setSuccess] = useState(false);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [documentBase64, setDocumentBase64] = useState<string | null>(null);
@@ -147,6 +170,12 @@ export default function ParentDashboard() {
   }, [selectedDate, setValue]);
 
   useEffect(() => {
+    // Wait for auth to be initialized
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+        // We can now proceed with data fetching if authenticated (even anonymously)
+        fetchStudentAndHistory();
+    });
+
     const fetchStudentAndHistory = async () => {
       try {
         const stored = localStorage.getItem('school_user');
@@ -191,12 +220,43 @@ export default function ParentDashboard() {
               );
 
               const unsubNotif = onSnapshot(notifQ, (snapshot) => {
-                setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                const newNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setNotifications(newNotifs);
+
+                if (isInitialNotif.current) {
+                  isInitialNotif.current = false;
+                  return;
+                }
+
+                snapshot.docChanges().forEach(change => {
+                  if (change.type === 'added') {
+                    const data = change.doc.data();
+                    if (!data.read) {
+                      setToastNotif({ 
+                        title: data.title || 'Informasi Baru', 
+                        message: data.message || 'Ada pembaruan status absensi' 
+                      });
+                      setTimeout(() => setToastNotif(null), 5000);
+                    }
+                  }
+                });
               }, (error) => handleFirestoreError(error, 'list', 'notifications'));
+
+              // Fetch tasks for the class
+              const tasksQ = query(
+                getTenantCollection('tasks'),
+                where('className', '==', studentData.className),
+                where('status', '==', 'Aktif'),
+                orderBy('dueDate', 'asc')
+              );
+              const unsubTasks = onSnapshot(tasksQ, (snapshot) => {
+                setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+              }, (error) => handleFirestoreError(error, 'list', 'tasks'));
 
               return () => {
                 unsubHist();
                 unsubNotif();
+                unsubTasks();
               };
             }
           }
@@ -207,8 +267,9 @@ export default function ParentDashboard() {
         setLoading(false);
       }
     };
-
-    fetchStudentAndHistory();
+    
+    // Cleanup auth subscription
+    return () => unsubscribeAuth();
     
     // Get GPS
     if (navigator.geolocation) {
@@ -360,6 +421,15 @@ export default function ParentDashboard() {
 
   return (
     <div className="space-y-6">
+      {toastNotif && (
+        <div className="fixed top-24 right-6 z-[100] max-w-sm">
+            <SimpleNotification 
+                title={toastNotif.title}
+                message={toastNotif.message}
+                onClose={() => setToastNotif(null)}
+            />
+        </div>
+      )}
       {/* View Switcher Header */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-5">
@@ -422,6 +492,16 @@ export default function ParentDashboard() {
              </button>
              <button 
               type="button"
+              onClick={() => setSearchParams({ view: 'tasks' })}
+              className={cn(
+                "px-6 py-2 rounded-lg text-xs font-bold transition-all",
+                view === 'tasks' ? "bg-white text-green-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+              )}
+             >
+               TUGAS SISWA
+             </button>
+             <button 
+              type="button"
               onClick={() => setSearchParams({ view: 'notifications' })}
               className={cn(
                 "px-6 py-2 rounded-lg text-xs font-bold transition-all relative",
@@ -446,6 +526,58 @@ export default function ParentDashboard() {
         {view === 'report' && student && (
           <div className="w-full">
             <ParentAttendanceReport student={student} history={history} />
+          </div>
+        )}
+
+        {view === 'tasks' && (
+          <div className="space-y-6">
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+               <div className="flex items-center gap-3 mb-8">
+                  <div className="p-3 bg-green-100 text-green-600 rounded-2xl shadow-lg shadow-green-50">
+                    <FileText size={24} />
+                  </div>
+                  <div>
+                     <h3 className="text-lg font-bold text-gray-900">Tugas Siswa</h3>
+                     <p className="text-sm text-gray-500">Daftar tugas yang diberikan oleh Bapak/Ibu Guru Mata Pelajaran</p>
+                  </div>
+               </div>
+
+                {tasks.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-20 text-gray-300">
+                      <FileText size={64} className="mb-4 opacity-10 text-green-500" />
+                      <p className="text-sm font-bold uppercase tracking-widest">Belum ada tugas untuk kelas ini</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="text-[10px] uppercase font-black text-green-600 bg-green-50/50 border-b border-green-100">
+                        <tr>
+                          <th className="px-6 py-4">Mata Pelajaran</th>
+                          <th className="px-6 py-4">Judul Tugas</th>
+                          <th className="px-6 py-4">Deskripsi</th>
+                          <th className="px-6 py-4">Tenggat</th>
+                          <th className="px-6 py-4">Guru</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {tasks.map((task, idx) => (
+                          <tr key={`parent-task-${task.id || 't'}-${idx}`} className="hover:bg-green-50/20 transition-colors group">
+                            <td className="px-6 py-4">
+                              <span className="px-3 py-1 bg-green-50 text-green-700 text-[10px] font-black uppercase tracking-widest rounded-full border border-green-100 shadow-sm">
+                                {task.subjectName}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 font-bold text-gray-900 group-hover:text-green-600 transition-colors">{task.title}</td>
+                            <td className="px-6 py-4 text-xs text-gray-600 max-w-[200px] truncate">{task.description || '-'}</td>
+                            <td className="px-6 py-4 font-bold text-orange-600 whitespace-nowrap">{formatDate(task.dueDate)}</td>
+                            <td className="px-6 py-4 text-xs font-semibold text-gray-500">{task.teacherName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+            </div>
           </div>
         )}
         
@@ -843,7 +975,27 @@ export default function ParentDashboard() {
         <div className="space-y-6">
           <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 h-full flex flex-col">
             <div className="flex items-center justify-between mb-8">
-              <h3 className="text-lg font-bold text-gray-900">Riwayat Absensi</h3>
+              <div className="flex flex-col">
+                <h3 className="text-lg font-bold text-gray-900">Riwayat Absensi</h3>
+                <div className="flex gap-2 mt-2">
+                  <select 
+                    value={sortConfig.key}
+                    onChange={(e) => setSortConfig({ ...sortConfig, key: e.target.value as any })}
+                    className="text-[9px] font-black uppercase tracking-wider bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="date">TANGGAL</option>
+                    <option value="type">JENIS</option>
+                    <option value="status">STATUS</option>
+                  </select>
+                  <button 
+                    onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}
+                    className="p-1 bg-gray-50 border border-gray-100 rounded-lg hover:bg-gray-100 transition-all"
+                    title="Ubah Arah Urutan"
+                  >
+                    <ArrowUpDown size={14} className="text-blue-600" />
+                  </button>
+                </div>
+              </div>
               <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
                 {history.length} Record
               </span>
@@ -856,7 +1008,7 @@ export default function ParentDashboard() {
                   <p className="text-sm">Belum ada riwayat pengajuan</p>
                 </div>
               ) : (
-                history.map((item, idx) => (
+                sortedHistory.map((item, idx) => (
                   <div key={`${item.id}-${idx}`} className="p-5 border border-gray-100 rounded-2xl hover:border-blue-100 hover:bg-blue-50/20 transition-all group relative overflow-hidden flex flex-col">
                     {/* Status Indicator Bar */}
                     <div className={cn(
@@ -1117,7 +1269,6 @@ export default function ParentDashboard() {
               playsInline 
               className="w-full h-full object-cover"
               onCanPlay={(e) => e.currentTarget.play()}
-              srcObject={cameraStream as any}
             />
             
             {/* Camera Overlay UI */}

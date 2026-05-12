@@ -178,10 +178,10 @@ export default function IndividualAttendance({ students, attendance, classes, on
 
     const finalY = (doc as any).lastAutoTable.finalY || 40;
     
-    const countSakit = filteredAttendance.filter(a => a.type === 'sakit').length;
-    const countIzin = filteredAttendance.filter(a => a.type === 'izin').length;
-    const countDispensasi = filteredAttendance.filter(a => a.type === 'dispensasi').length;
-    const countAlpha = filteredAttendance.filter(a => a.type === 'alpha').length;
+    const countSakit = filteredAttendance.filter(a => a.type === 'Sakit').length;
+    const countIzin = filteredAttendance.filter(a => a.type === 'Izin').length;
+    const countDispensasi = filteredAttendance.filter(a => a.type === 'Dispensasi').length;
+    const countAlpha = filteredAttendance.filter(a => a.type === 'Alpa' || (a.type as any) === 'Alpha').length;
 
     doc.setFontSize(10);
     doc.text(`Rekapitulasi:`, 14, finalY + 10);

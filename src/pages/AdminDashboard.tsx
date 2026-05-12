@@ -37,8 +37,12 @@ import {
   QrCode,
   Bell,
   BellRing,
+  HelpCircle,
   HardDrive,
-  BookOpen, Library, School, Award, Trophy, Medal, Star, Bookmark, Calculator, Palette, Music, Languages, Cpu, Atom, FlaskConical, Globe, History, Briefcase, Zap, Target, Anchor, Compass, Feather, PenTool
+  BookOpen, Library, School, Award, Trophy, Medal, Star, Bookmark, Calculator, Palette, Music, Languages, Cpu, Atom, FlaskConical, Globe, History, Briefcase, Zap, Target, Anchor, Compass, Feather, PenTool,
+  ChevronUp,
+  ChevronDown,
+  ArrowUpDown
 } from 'lucide-react';
 
 import { db, auth, handleFirestoreError } from '../lib/firebase';
@@ -68,6 +72,7 @@ import AttendanceTrendChart from '../components/AttendanceTrendChart';
 import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
 import { AIPredictiveAnalytics } from '../components/AIPredictiveAnalytics';
 import ActiveAcademicYearDisplay from '../components/ActiveAcademicYearDisplay';
+import DigitalClock from '../components/DigitalClock';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
 import SchoolDataSettings from '../components/SchoolDataSettings';
 import LogoSettings from '../components/LogoSettings';
@@ -98,7 +103,7 @@ export default function AdminDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as any;
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'academic-years' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'weekly-recap' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'overview'));
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'teachers-list' | 'subject-teachers' | 'classes' | 'counselors' | 'attendance' | 'academic-years' | 'attendance-summary' | 'attendance-detail' | 'attendance-individual' | 'settings' | 'rekap' | 'rekapSemester' | 'weekly-recap' | 'school' | 'attendance-officer-history' | 'attendance-officer-rekap' | 'role-management-guru' | 'role-management-petugas' | 'subject-attendance-report'>(tabParam === 'role-management' ? 'role-management-guru' : (tabParam || 'settings'));
   const [filterMonth, setFilterMonth] = useState('');
   const [filterSemester, setFilterSemester] = useState('');
 
@@ -114,7 +119,7 @@ export default function AdminDashboard() {
     } else if (tabParam && tabParam !== activeTab) {
       setActiveTab(tabParam);
     } else if (!tabParam) {
-      setActiveTab('overview');
+      setActiveTab('settings');
     }
   }, [tabParam]);
 
@@ -1151,6 +1156,7 @@ export default function AdminDashboard() {
   const [waText, setWaText] = useState('');
   const [parsedWAData, setParsedWAData] = useState<any>(null);
   const [filterDate, setFilterDate] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: 'date' | 'type' | 'status' | 'studentName' | 'className'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
 
   const filteredAttendance = useMemo(() => {
     return attendance.filter(a => {
@@ -1166,8 +1172,26 @@ export default function AdminDashboard() {
       }
       
       return matchSearch && matchDate && matchClass && matchType && matchCounselor;
+    }).sort((a, b) => {
+      const key = sortConfig.key;
+      const direction = sortConfig.direction === 'asc' ? 1 : -1;
+      
+      if (key === 'date') {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        if (dateA !== dateB) return (dateA - dateB) * direction;
+        
+        // Fallback to submittedAt
+        const timeA = a.submittedAt?.seconds || 0;
+        const timeB = b.submittedAt?.seconds || 0;
+        return (timeA - timeB) * direction;
+      }
+      
+      const valA = String(a[key] || '').toLowerCase();
+      const valB = String(b[key] || '').toLowerCase();
+      return valA.localeCompare(valB) * direction;
     });
-  }, [attendance, searchTerm, filterDate, classFilter, filterType, user, filterMode]);
+  }, [attendance, searchTerm, filterDate, classFilter, filterType, user, filterMode, sortConfig]);
 
   useEffect(() => {
     if (waText.trim()) {
@@ -1762,7 +1786,7 @@ export default function AdminDashboard() {
     doc.rect(0, 49, 85.6, 5, 'F');
     doc.setFontSize(5);
     doc.setTextColor(100, 116, 139); // gray-500
-    doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
+    doc.text("SIAGA - Sistem Informasi Absensi Selalu Terjaga", 42.8, 52.5, { align: 'center' });
 
     doc.save(`KTA_GURU_${teacher.nip}_${teacher.name}.pdf`);
   };
@@ -2496,7 +2520,7 @@ export default function AdminDashboard() {
     doc.rect(0, 49, 85.6, 5, 'F');
     doc.setFontSize(5);
     doc.setTextColor(100, 116, 139); // gray-500
-    doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
+    doc.text("SIAGA - Sistem Informasi Absensi Selalu Terjaga", 42.8, 52.5, { align: 'center' });
 
     doc.save(`KTA_${student.nis}_${student.name}.pdf`);
   };
@@ -2570,7 +2594,7 @@ export default function AdminDashboard() {
         doc.rect(0, 49, 85.6, 5, 'F');
         doc.setFontSize(5);
         doc.setTextColor(100, 116, 139);
-        doc.text("SIAGA - Sistem Informasi Administrasi Giat Absensi", 42.8, 52.5, { align: 'center' });
+        doc.text("SIAGA - Sistem Informasi Absensi Selalu Terjaga", 42.8, 52.5, { align: 'center' });
       }
 
       doc.save(`Koleksi_KTA_Terpilih_${new Date().getTime()}.pdf`);
@@ -2960,6 +2984,7 @@ export default function AdminDashboard() {
                 {'Administrator Sistem'}
               </p>
               <ActiveAcademicYearDisplay />
+              <DigitalClock />
             </div>
             <p className="text-sm text-gray-500 font-medium">
                {'Kelola data sekolah, guru, siswa, dan konfigurasi administrasi presensi.'}
@@ -3015,6 +3040,85 @@ export default function AdminDashboard() {
       {/* Stats Cards - AdminLTE 스타일 Small Box */}
       {activeTab === 'overview' && (
         <>
+          {/* Dashboard Notifications Summary */}
+          {adminNotifications.filter(n => !n.read && (n.title?.includes('Izin') || n.title?.includes('Guru Mapel') || n.title?.includes('Alpa'))).length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 p-6 bg-white border-2 border-red-100 rounded-[2rem] shadow-xl shadow-red-50/50"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-red-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-red-200">
+                    <BellRing size={20} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-gray-900 uppercase tracking-tighter">Pemberitahuan Penting</h3>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5 font-mono">
+                      Ada <span>{adminNotifications.filter(n => !n.read && (n.title?.includes('Izin') || n.title?.includes('Guru Mapel') || n.title?.includes('Alpa'))).length}</span> laporan baru yang memerlukan perhatian
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowNotifications(true)}
+                  className="text-[10px] font-black text-gray-400 hover:text-red-600 transition-colors uppercase tracking-widest flex items-center gap-2"
+                >
+                  Lihat Detail <Plus size={12} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Izin/Absensi Section */}
+                {adminNotifications.filter(n => !n.read && n.title?.includes('Izin')).length > 0 && (
+                  <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-4 flex items-center gap-4 group hover:bg-amber-50 transition-all cursor-pointer" onClick={() => setShowNotifications(true)}>
+                    <div className="w-12 h-12 bg-amber-500 text-white rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-amber-200 group-hover:scale-110 transition-transform">
+                      <Calendar size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-amber-900 uppercase tracking-tighter">Pengajuan Izin</p>
+                      <p className="text-lg font-black text-amber-600 leading-none mt-0.5">
+                        <span>{adminNotifications.filter(n => !n.read && n.title?.includes('Izin')).length}</span> <span className="text-[10px] font-bold uppercase tracking-widest ml-1">Baru</span>
+                      </p>
+                      <p className="text-[9px] font-bold text-amber-400 uppercase tracking-widest mt-1">Sakit, Izin, Dispen</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inquiry Section */}
+                {adminNotifications.filter(n => !n.read && n.title?.includes('Guru Mapel')).length > 0 && (
+                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-4 group hover:bg-indigo-50 transition-all cursor-pointer" onClick={() => setShowNotifications(true)}>
+                    <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-200 group-hover:scale-110 transition-transform">
+                      <HelpCircle size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-indigo-900 uppercase tracking-tighter">Tanya Guru Mapel</p>
+                      <p className="text-lg font-black text-indigo-600 leading-none mt-0.5">
+                        <span>{adminNotifications.filter(n => !n.read && n.title?.includes('Guru Mapel')).length}</span> <span className="text-[10px] font-bold uppercase tracking-widest ml-1">Laporan</span>
+                      </p>
+                      <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest mt-1">Ketidakhadiran di Kelas</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Alpa Section */}
+                {adminNotifications.filter(n => !n.read && n.title?.includes('Alpa')).length > 0 && (
+                  <div className="bg-red-50/50 border border-red-100 rounded-2xl p-4 flex items-center gap-4 group hover:bg-red-50 transition-all cursor-pointer" onClick={() => setShowNotifications(true)}>
+                    <div className="w-12 h-12 bg-red-600 text-white rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-red-200 group-hover:scale-110 transition-transform">
+                      <XCircle size={24} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-red-900 uppercase tracking-tighter">Laporan Alpa</p>
+                      <p className="text-lg font-black text-red-600 leading-none mt-0.5">
+                        <span>{adminNotifications.filter(n => !n.read && n.title?.includes('Alpa')).length}</span> <span className="text-[10px] font-bold uppercase tracking-widest ml-1">Siswa Alpa</span>
+                      </p>
+                      <p className="text-[9px] font-bold text-red-400 uppercase tracking-widest mt-1">Tanpa Keterangan</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {[
               { label: 'Total Siswa', value: stats.totalStudents, icon: GraduationCap, color: 'bg-info', bg: 'bg-blue-500', isTotal: true },
@@ -3388,6 +3492,12 @@ export default function AdminDashboard() {
             </div>
           )}
         </>
+      )}
+
+      {(activeTab as any) === 'calendar' && (
+        <div className="p-8">
+/* Removed AcademicCalendar */
+        </div>
       )}
 
           {activeTab.startsWith('role-management') && (
@@ -4028,7 +4138,7 @@ export default function AdminDashboard() {
                   )}
                   {selectedStudents.length > 0 && (
                     <button 
-                      onClick={printSelectedLoginCards}
+                      onClick={() => printSelectedLoginCards()}
                       className="px-3 py-2 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1 shadow-sm uppercase"
                     >
                       <IdCard size={14} /> KARTU LOGIN ({selectedStudents.length})
@@ -5477,7 +5587,7 @@ export default function AdminDashboard() {
                         const g = (s.gender || '').trim().toLowerCase();
                         return g === 'p' || g.startsWith('perem') || g === 'perempuan';
                       }).length;
-                      const waliKelas = teachers.find(t => t.id === cl.waliKelasId)?.name || 
+                      const waliKelas = teachers.find(t => t.id === (cl as any).waliKelasId)?.name || 
                                          teachers.find(t => (t.className || '').toLowerCase().replace(/\s/g, '') === (cl.name || '').toLowerCase().replace(/\s/g, ''))?.name || '-';
                       const guruBK = teachers.filter(t => t.status?.includes('Guru BK') && t.managedClasses?.some((mc: string) => mc.toLowerCase().replace(/\s/g, '') === (cl.name || '').toLowerCase().replace(/\s/g, ''))).map(t => t.name).join(', ') || '-';
                       
@@ -5485,7 +5595,7 @@ export default function AdminDashboard() {
                         <tr key={`class-row-${cl.id || cl.name}-${idx}`} className={cn("hover:bg-blue-50/30 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-gray-50/50")}>
                           <td className="px-6 py-3 border-r border-gray-100 text-sm font-bold text-gray-400 text-center">{(classPage - 1) * itemsPerPage + idx + 1}</td>
                           <td className="px-6 py-3 border-r border-gray-100 font-bold text-gray-900 flex items-center gap-2">
-                            {cl.icon && React.createElement(getLucideIcon(cl.icon), { size: 16, className: cl.color || "text-gray-500" })}
+                            {(cl as any).icon && React.createElement(getLucideIcon((cl as any).icon), { size: 16, className: (cl as any).color || "text-gray-500" })}
                             {cl.name}
                           </td>
                           <td className="px-6 py-3 border-r border-gray-100 text-sm text-center font-bold">
@@ -5988,7 +6098,7 @@ export default function AdminDashboard() {
                        ))}
                        <button 
                         onClick={() => { 
-                    if (activeTab === 'attendance-detail') {
+                    if ((activeTab as any) === 'attendance-detail') {
                       setFormData({ 
                         date: new Date().toISOString().split('T')[0],
                         type: 'Sakit',
@@ -6128,13 +6238,73 @@ export default function AdminDashboard() {
                   <table className="w-full text-left border-collapse min-w-[1000px] border border-gray-100 shadow-sm">
                     <thead>
                       <tr className="bg-gray-50/80 border-b border-gray-100 uppercase text-[10px] sm:text-xs font-black tracking-widest text-gray-500">
-                        <th className="px-6 py-4">Peserta Didik</th>
-                        <th className="px-6 py-4">Tanggal & Masuk</th>
-                        <th className="px-6 py-4 text-center">Jenis & Alasan</th>
+                        <th 
+                          className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => {
+                            setSortConfig({
+                              key: 'studentName',
+                              direction: sortConfig.key === 'studentName' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                            });
+                          }}
+                        >
+                          <div className="flex items-center gap-1">
+                            Peserta Didik
+                            {sortConfig.key === 'studentName' ? (
+                              sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                            ) : <ArrowUpDown size={12} className="opacity-30" />}
+                          </div>
+                        </th>
+                        <th 
+                          className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => {
+                            setSortConfig({
+                              key: 'date',
+                              direction: sortConfig.key === 'date' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                            });
+                          }}
+                        >
+                          <div className="flex items-center gap-1">
+                            Tanggal & Masuk
+                            {sortConfig.key === 'date' ? (
+                              sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                            ) : <ArrowUpDown size={12} className="opacity-30" />}
+                          </div>
+                        </th>
+                        <th 
+                          className="px-6 py-4 text-center cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => {
+                            setSortConfig({
+                              key: 'type',
+                              direction: sortConfig.key === 'type' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                            });
+                          }}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Jenis & Alasan
+                            {sortConfig.key === 'type' ? (
+                              sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                            ) : <ArrowUpDown size={12} className="opacity-30" />}
+                          </div>
+                        </th>
                         <th className="px-6 py-4">Informasi Orang Tua</th>
                         <th className="px-6 py-4 text-center">Dokumen</th>
                         <th className="px-6 py-4 text-center">Koordinat</th>
-                        <th className="px-6 py-4 text-center">Status</th>
+                        <th 
+                          className="px-6 py-4 text-center cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => {
+                            setSortConfig({
+                              key: 'status',
+                              direction: sortConfig.key === 'status' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                            });
+                          }}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            Status
+                            {sortConfig.key === 'status' ? (
+                              sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                            ) : <ArrowUpDown size={12} className="opacity-30" />}
+                          </div>
+                        </th>
                         <th className="px-6 py-4 text-center">Aksi</th>
                       </tr>
                     </thead>
@@ -6441,8 +6611,8 @@ export default function AdminDashboard() {
                                 (s.nis || '').includes(attendanceFormStudentSearch)
                               )
                               .sort((a,b) => (a.name || '').localeCompare(b.name || ''))
-                              .map(s => (
-                                <option key={s.id} value={s.id}>{s.name} ({s.className})</option>
+                              .map((s, sIdx) => (
+                                <option key={`form-student-opt-${s.id || sIdx}`} value={s.id}>{s.name} ({s.className})</option>
                               ))
                             }
                           </select>
@@ -6540,14 +6710,14 @@ export default function AdminDashboard() {
                           <label className="text-[10px] font-bold text-gray-400 uppercase">Kode Sekolah</label>
                           <input 
                             type="text" 
-                            placeholder="Contoh: SMPN1" 
+                            placeholder="Contoh: smpn1" 
                             required 
-                            disabled={!formData.isNew && !!formData.id}
                             className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none" 
                             value={formData.id || ''}
-                            onChange={e => setFormData({...formData, id: e.target.value})}
+                            onChange={e => setFormData({...formData, id: e.target.value.toLowerCase()})}
                             maxLength={20}
                           />
+                          <p className="text-[10px] text-red-500 mt-1 font-medium italic">Gunakan huruf kecil</p>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] font-bold text-gray-400 uppercase">Admin Email</label>
@@ -6639,7 +6809,7 @@ export default function AdminDashboard() {
                         }}
                       >
                          <option value="">-- Pilih Kelas --</option>
-                         {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => <option key={`class-select-${cl.id || idx}`} value={cl.name}>{cl.name}</option>)}
+                         {classes.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, idx) => <option key={`admin-class-select-${cl.id || idx}`} value={cl.name}>{cl.name}</option>)}
                       </select>
                       <select 
                         className="w-full p-3 border border-gray-100 rounded-xl outline-none"
@@ -6704,7 +6874,7 @@ export default function AdminDashboard() {
                               onChange={e => setFormData({...formData, className: e.target.value})}
                             >
                               <option value="">-- Pilih Kelas Wali --</option>
-                              {classes.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={`${cl.id || 'class'}-${i}`} value={cl.name}>{cl.name}</option>)}
+                              {classes.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {numeric: true})).map((cl, i) => <option key={`admin-class-list-opt-${cl.id || 'class'}-${i}`} value={cl.name}>{cl.name}</option>)}
                             </select>
                           </div>
                         )}
@@ -6766,7 +6936,7 @@ export default function AdminDashboard() {
                     ) : (
                       <Save size={18} />
                     )}
-                    {formData.id ? 'Simpan Perubahan' : (activeTab === 'attendance-detail' ? 'Simpan Kehadiran' : 'Tambah Data')}
+                    {formData.id ? 'Simpan Perubahan' : ((activeTab as any) === 'attendance-detail' ? 'Simpan Kehadiran' : 'Tambah Data')}
                  </button>
                 </>
               )}

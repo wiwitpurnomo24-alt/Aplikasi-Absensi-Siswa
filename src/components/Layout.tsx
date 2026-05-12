@@ -222,8 +222,17 @@ export default function Layout() {
     { name: 'DASHBOARD', path: '/parent', icon: UserCircle, role: ['PARENT'] },
     { name: 'NOTIFIKASI', path: '/parent?view=notifications', icon: BellRing, role: ['PARENT'] },
     { name: 'RIWAYAT ABSENSI', path: '/parent?view=history', icon: ClipboardList, role: ['PARENT'] },
+    { name: 'TUGAS SISWA', path: '/parent?view=tasks', icon: FileText, role: ['PARENT'] },
+    // Teacher Menu
     { name: 'DASHBOARD', path: '/teacher?tab=overview', icon: LayoutGrid, role: ['TEACHER'] },
     { name: 'DATA SISWA', path: '/teacher?tab=students', icon: GraduationCap, role: ['TEACHER'], className: "text-blue-500 hover:text-blue-400" },
+    { 
+      name: 'ABSENSI MANUAL', 
+      path: '/teacher?tab=attendance&showAddModal=true', 
+      icon: FilePlus, 
+      role: ['TEACHER', 'ADMIN', 'WALI_KELAS'], 
+      className: "text-slate-900 font-bold" 
+    },
     { 
       name: 'INPUT GURU MAPEL', 
       path: '/subject-teacher', 
@@ -234,7 +243,8 @@ export default function Layout() {
         { name: 'TANYA WALI KELAS', path: '/subject-teacher?tab=inquiry', icon: MessageSquare, role: ['SUBJECT_TEACHER'] },
         { name: 'LAPORAN HARIAN', path: '/subject-teacher?tab=history', icon: Clock, role: ['SUBJECT_TEACHER'] },
         { name: 'LAPORAN BULANAN', path: '/subject-teacher?tab=monthly', icon: Calendar, role: ['SUBJECT_TEACHER'] },
-        { name: 'LAPORAN SEMESTER', path: '/subject-teacher?tab=semester', icon: Calendar, role: ['SUBJECT_TEACHER'] }
+        { name: 'LAPORAN SEMESTER', path: '/subject-teacher?tab=semester', icon: Calendar, role: ['SUBJECT_TEACHER'] },
+        { name: 'TUGAS SISWA', path: '/subject-teacher?tab=tasks', icon: FileText, role: ['SUBJECT_TEACHER'] }
       ]
     },
     { name: 'DASHBOARD', path: '/admin?tab=overview', icon: LayoutGrid, role: ['ADMIN', 'COUNSELOR', 'KEPALA_SEKOLAH', 'WAKIL_KEPALA_SEKOLAH'] },
@@ -290,13 +300,7 @@ export default function Layout() {
       role: ['TEACHER'], 
       className: "text-slate-900 font-bold" 
     },
-    { 
-      name: 'ABSENSI MANUAL', 
-      path: '/teacher?tab=attendance&showAddModal=true', 
-      icon: FilePlus, 
-      role: ['TEACHER', 'ADMIN', 'WALI_KELAS'], 
-      className: "text-slate-900 font-bold" 
-    },
+    { name: 'TUGAS SISWA', path: '/teacher?tab=tasks', icon: FileText, role: ['TEACHER'] },
     {
       name: 'PETUGAS ABSENSI KELAS',
       icon: Users,
@@ -313,7 +317,7 @@ export default function Layout() {
   const filteredNavItems = navItems.filter(item => item.role.includes(user?.role || ''));
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
+    <div className="notranslate flex h-screen bg-gray-100 font-sans overflow-hidden">
       {/* Mobile Sidebar Overlay */}
       {isMobileSidebarOpen && (
         <div 
@@ -357,7 +361,7 @@ export default function Layout() {
 
         <nav className="flex-1 p-2 mt-2 space-y-1">
           <p className="px-4 py-2 text-[10px] font-black text-yellow-400 uppercase tracking-widest drop-shadow-sm">Menu Utama</p>
-          {filteredNavItems.map((item) => {
+          {filteredNavItems.map((item, i) => {
             const isActive = item.path && (location.pathname + location.search === item.path || 
                            (location.pathname === item.path && item.path.indexOf('?') === -1));
 
@@ -379,12 +383,12 @@ export default function Layout() {
                   </button>
                   {isOpen && (
                     <div className="pl-4 space-y-1">
-                      {item.subItems.filter(sub => sub.role.includes(user?.role || '')).map((sub) => {
+                      {item.subItems.filter(sub => sub.role.includes(user?.role || '')).map((sub, sIdx) => {
                         const isSubActive = location.pathname + location.search === sub.path || 
                                            (location.pathname === sub.path && sub.path.indexOf('?') === -1);
                         return (
                           <Link
-                            key={`sub-nav-${sub.path}`}
+                            key={`sub-nav-${sub.path || 'no-path'}-${sIdx}`}
                             to={sub.path!}
                             onClick={() => setIsMobileSidebarOpen(false)}
                             className={cn(
@@ -406,7 +410,7 @@ export default function Layout() {
 
             return (
               <Link
-                key={`nav-item-${item.name}-${item.path}`}
+                key={`nav-item-${item.name}-${item.path || 'no-path'}-${i}`}
                 to={item.path!}
                 onClick={() => setIsMobileSidebarOpen(false)}
                 className={cn(
@@ -532,7 +536,7 @@ export default function Layout() {
                />
                <span className="h-6 w-[1px] bg-sky-400/50 mx-1"></span>
                <p className="flex items-center gap-2">
-                 Beranda / <span className="text-white font-bold">{navItems.find(i => i.path === location.pathname)?.name || 'Dashboard'}</span>
+                 <span>Beranda / </span><span className="text-white font-bold">{navItems.find(i => i.path === location.pathname)?.name || 'Dashboard'}</span>
                </p>
              </div>
           </div>
@@ -623,8 +627,8 @@ export default function Layout() {
                 )}
                 <p className="text-xs font-bold text-white">{user?.name}</p>
                 <p className="text-[10px] text-sky-200 font-bold uppercase tracking-widest">
-                  {ROLE_LABELS[user?.role as keyof typeof ROLE_LABELS] || user?.role}
-                  {user?.role === 'TEACHER' && user?.className ? ` ${user.className}` : ''}
+                  <span>{ROLE_LABELS[user?.role as keyof typeof ROLE_LABELS] || user?.role}</span>
+                  {user?.role === 'TEACHER' && user?.className && <span> {user.className}</span>}
                 </p>
              </div>
              <div className="relative">

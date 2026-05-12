@@ -14,6 +14,8 @@ export interface Student {
   parentPassword?: string;
   userId?: string;
   password?: string;
+  role?: string;
+  isOfficer?: boolean;
 }
 
 export interface StudentPII {
@@ -26,12 +28,14 @@ export interface Teacher {
   id: string;
   name: string;
   nip: string;
+  email?: string;
   className: string;
   phoneNumber?: string;
   password?: string;
   status?: string[];
   subjects?: string[];
   taughtClasses?: string[];
+  managedClasses?: string[];
 }
 
 export interface AttendanceRecord {
@@ -62,6 +66,7 @@ export interface AttendanceRecord {
   processedAt?: any;
   processedBy?: string;
   processedById?: string;
+  teacherName?: string;
 }
 
 export interface SchoolData {
@@ -82,6 +87,7 @@ export interface SchoolClass {
   name: string;
   color?: string;
   icon?: string;
+  waliKelasId?: string;
 }
 
 export interface AcademicYear {
@@ -164,3 +170,17 @@ export interface UserProfile {
   subjects?: string[]; // For detailed subject list
   taughtClasses?: string[]; // For subject teachers' classes
 }
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string; // ISO date string or format YYYY-MM-DD
+  status: 'Aktif' | 'Selesai' | 'Terlambat';
+  className: string;
+  subjectName: string;
+  teacherId: string;
+  teacherName: string;
+  createdAt: any;
+}
+

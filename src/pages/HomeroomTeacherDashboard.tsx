@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDocs, addDoc } from 'firebase/firestore';
 import { useAuthStore } from '../lib/auth-store';
-import { MessageCircle, CheckCircle2, Clock, Calendar, FileText, User } from 'lucide-react';
-import { handleFirestoreError } from '../lib/firebase';
-import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
-import RoleSwitcher from '../components/RoleSwitcher';
-import { checkAttendanceAlert } from '../services/attendanceNotificationService';
-import PresenceMonthlyReport from '../components/PresenceMonthlyReport';
-import PresenceSemesterReport from '../components/PresenceSemesterReport';
-import AttendanceRecapTable from '../components/AttendanceRecapTable';
-import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
+import { MessageCircle, CheckCircle2, Clock, Calendar, FileText, User, Bell, BellRing, X } from 'lucide-react';
 import { Student, AttendanceRecord } from '../types';
 import { cn } from '../lib/utils';
 import Loading from '../components/Loading';
+import SimpleNotification from '../components/SimpleNotification';
 import { getTenantCollection, getTenantDoc } from '../lib/tenant';
+import RoleSwitcher from '../components/RoleSwitcher';
+import AttendanceAlertsDisplay from '../components/AttendanceAlertsDisplay';
+import PresenceMonthlyReport from '../components/PresenceMonthlyReport';
+import AttendanceRecapTable from '../components/AttendanceRecapTable';
+import SemesterAttendanceRecapTable from '../components/SemesterAttendanceRecapTable';
+import { handleFirestoreError } from '../lib/firebase';
 
 export default function HomeroomTeacherDashboard() {
   const { user } = useAuthStore();
@@ -25,23 +24,60 @@ export default function HomeroomTeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'inquiry' | 'monitoring' | 'monthly' | 'semester'>('inquiry');
   const [notifications, setNotifications] = useState<any[]>([]);
+
   const [showNotifications, setShowNotifications] = useState(false);
+  const [toastNotif, setToastNotif] = useState<{title: string, message: string} | null>(null);
+  const isInitialNotif = React.useRef(true);
 
   useEffect(() => {
-    if (!user || !user.className) return;
+    if (!user || (!user.className && !user.uid)) return;
     
-    const q = query(
+    // Homeroom teacher listens for notifications for their class OR targeted to them
+    const qClass = query(
         getTenantCollection('notifications'),
-        where('className', '==', user.className),
+        where('className', '==', user.className || ''),
+        where('targetRole', '==', 'TEACHER'),
         orderBy('createdAt', 'desc')
     );
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-        setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubscribe = onSnapshot(qClass, (snapshot) => {
+        const newNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setNotifications(newNotifs);
+
+        if (isInitialNotif.current) {
+            isInitialNotif.current = false;
+            return;
+        }
+
+        // Show toast for new unread notifications
+        snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+                const data = change.doc.data();
+                if (!data.read) {
+                    setToastNotif({ 
+                        title: data.title || 'Notifikasi Baru', 
+                        message: data.message || 'Ada pesan baru untuk Anda' 
+                    });
+                    // Auto-hide toast after 5s
+                    setTimeout(() => setToastNotif(null), 5000);
+                }
+            }
+        });
+    }, (error) => handleFirestoreError(error, 'list', 'notifications'));
     
     return unsubscribe;
   }, [user]);
+
+  const markAllRead = async () => {
+    try {
+        const unread = notifications.filter(n => !n.read);
+        for (const n of unread) {
+            await updateDoc(getTenantDoc('notifications', n.id), { read: true });
+        }
+    } catch (err) {
+        console.error("Error marking all read:", err);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -113,12 +149,26 @@ export default function HomeroomTeacherDashboard() {
 
   const handleReply = async (id: string, response: string) => {
     try {
+      const inq = inquiries.find(i => i.id === id);
       await updateDoc(getTenantDoc('subjectInquiries', id), {
         response,
         respondedBy: user?.name,
         respondedAt: serverTimestamp(),
         status: 'Sudah di Jawab'
       });
+
+      if (inq) {
+        // Notify Subject Teacher
+        await addDoc(getTenantCollection('notifications'), {
+          targetUserId: inq.subjectTeacherId,
+          targetRole: 'SUBJECT_TEACHER', // Special role or just use ID
+          title: '💬 Jawaban Wali Kelas',
+          message: `Wali Kelas (${user?.name}) telah menjawab pertanyaan Anda untuk ${inq.studentName}: ${response}`,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+
       // Update local state
       setInquiries(prev => prev.map(inq => inq.id === id ? { ...inq, response, respondedBy: user?.name, status: 'Sudah di Jawab' } : inq));
     } catch (err) {
@@ -152,8 +202,80 @@ export default function HomeroomTeacherDashboard() {
                </div>
             </div>
          </div>
-         <RoleSwitcher />
+         <div className="flex items-center gap-2">
+            <div className="relative">
+                <button 
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="p-3 bg-gray-50 text-gray-600 rounded-2xl hover:bg-gray-100 transition-all border border-gray-100 relative"
+                >
+                    {notifications.filter(n => !n.read).length > 0 ? <BellRing className="text-blue-600" size={24} /> : <Bell size={24} />}
+                    {notifications.filter(n => !n.read).length > 0 && (
+                        <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full font-black animate-bounce border-2 border-white">
+                            {notifications.filter(n => !n.read).length}
+                        </span>
+                    )}
+                </button>
+
+                {showNotifications && (
+                    <div className="absolute right-0 mt-3 w-80 bg-white rounded-3xl shadow-2xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                        <div className="p-5 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+                            <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest">Notifikasi</h4>
+                            <button 
+                                onClick={markAllRead}
+                                className="text-[10px] font-bold text-blue-600 hover:underline uppercase tracking-wide"
+                            >
+                                Baca Semua
+                            </button>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto custom-scrollbar">
+                            {notifications.length === 0 ? (
+                                <div className="p-8 text-center">
+                                    <Bell size={32} className="mx-auto text-gray-200 mb-2" />
+                                    <p className="text-gray-400 text-[10px] font-bold uppercase">Belum ada notifikasi</p>
+                                </div>
+                            ) : (
+                                notifications.map((n, i) => (
+                                    <div 
+                                        key={`homeroom-notif-${n.id || i}`} 
+                                        className={cn(
+                                            "p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors flex gap-3 relative",
+                                            !n.read && "bg-blue-50/30"
+                                        )}
+                                        onClick={async () => {
+                                            if(!n.read) await updateDoc(getTenantDoc('notifications', n.id), { read: true });
+                                        }}
+                                    >
+                                        {!n.read && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />}
+                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+                                            <Bell size={14} />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-black text-gray-900 leading-tight mb-1">{n.title}</p>
+                                            <p className="text-[11px] text-gray-600 leading-relaxed font-medium">{n.message}</p>
+                                            <p className="text-[9px] text-gray-400 font-bold mt-1 uppercase">
+                                                {n.createdAt?.toDate ? n.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+            <RoleSwitcher />
+         </div>
       </div>
+
+      {toastNotif && (
+        <div className="fixed top-24 right-6 z-[100] max-w-sm">
+            <SimpleNotification 
+                title={toastNotif.title}
+                message={toastNotif.message}
+                onClose={() => setToastNotif(null)}
+            />
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 bg-gray-100/50 p-1.5 rounded-2xl w-fit">
         <button 

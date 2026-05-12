@@ -320,7 +320,7 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
             </tr>
             <tr>
               {daysArray.map(day => (
-                <th key={day} className="p-2 border border-blue-100/50 text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50/40 text-center w-8">
+                <th key={`attendance-recap-${day}`} className="p-2 border border-blue-100/50 text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50/40 text-center w-8">
                   {day}
                 </th>
               ))}
@@ -347,14 +347,14 @@ export default function AttendanceRecapTable({ students, attendance, classes, sh
                         ${code === 'A' ? 'bg-red-50 text-red-600' : ''}
                         ${code === 'D' ? 'bg-purple-50 text-purple-600' : ''}
                       `}>
-                        {code || '-'}
+                        <span>{code || '-'}</span>
                       </td>
                     );
                   })}
-                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-orange-600 bg-orange-50/20">{student.totals.s}</td>
-                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-yellow-600 bg-yellow-50/20">{student.totals.i}</td>
-                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-red-600 bg-red-50/20">{student.totals.a}</td>
-                  <td className="p-2 text-xs text-center font-black text-purple-600 bg-purple-50/20">{student.totals.d}</td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-orange-600 bg-orange-50/20"><span>{student.totals.s}</span></td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-yellow-600 bg-yellow-50/20"><span>{student.totals.i}</span></td>
+                  <td className="p-2 border-r border-gray-100 text-xs text-center font-black text-red-600 bg-red-50/20"><span>{student.totals.a}</span></td>
+                  <td className="p-2 text-xs text-center font-black text-purple-600 bg-purple-50/20"><span>{student.totals.d}</span></td>
                 </tr>
               ))
             ) : (

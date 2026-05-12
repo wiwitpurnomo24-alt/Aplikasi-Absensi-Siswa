@@ -1,0 +1,191 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Global Safety Net ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSystemAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == "wiwitpurnomo24@guru.smp.belajar.id"
+      );
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == role;
+    }
+
+    function isSchoolAdmin(schoolId) {
+      return isSystemAdmin() || (hasRole('ADMIN') && getUserData().schoolId == schoolId);
+    }
+
+    function isSchoolTeacher(schoolId) {
+      return hasRole('TEACHER') && getUserData().schoolId == schoolId;
+    }
+
+    function isSchoolSubjectTeacher(schoolId) {
+      return hasRole('SUBJECT_TEACHER') && getUserData().schoolId == schoolId;
+    }
+
+    function isSchoolOfficer(schoolId) {
+      return hasRole('PETUGAS_ABSEN_KELAS') && getUserData().schoolId == schoolId;
+    }
+
+    function isSchoolCounselor(schoolId) {
+      return hasRole('COUNSELOR') && getUserData().schoolId == schoolId;
+    }
+
+    function isSchoolStaff(schoolId) {
+      return isSchoolAdmin(schoolId) || isSchoolTeacher(schoolId) || isSchoolSubjectTeacher(schoolId) || isSchoolOfficer(schoolId) || isSchoolCounselor(schoolId);
+    }
+
+    // --- Root Collections (Legacy/Global) ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isSystemAdmin());
+      allow list: if isSystemAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && (request.auth.uid == userId || isSystemAdmin());
+    }
+
+    match /admins/{userId} {
+      allow read: if true;
+      allow write: if isSystemAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+    
+    // --- Tenant Collections ---
+    match /schools/{schoolId} {
+      allow get: if isSignedIn();
+      
+      function schoolStaff() { return isSchoolStaff(schoolId); }
+      function schoolAdmin() { return isSchoolAdmin(schoolId); }
+
+      match /schoolData/{id} {
+        allow read: if true;
+        allow write: if schoolAdmin();
+      }
+
+      match /schoolConfig/{id} {
+        allow read: if true;
+        allow write: if schoolAdmin();
+      }
+
+      match /academicYears/{id} {
+        allow read: if true;
+        allow write: if schoolAdmin();
+      }
+
+      match /academicCalendar/{id} {
+        allow read: if true;
+        allow write: if schoolStaff();
+      }
+
+      match /students/{studentId} {
+        allow read: if isSignedIn();
+        allow write: if schoolStaff();
+      }
+
+      match /teachers/{teacherId} {
+        allow read: if isSignedIn();
+        allow write: if schoolAdmin();
+      }
+
+      match /attendance/{id} {
+        allow read: if isSignedIn() && (schoolStaff() || (hasRole('PARENT') && existing().studentId == getUserData().nis));
+        allow create: if isSignedIn();
+        allow update: if schoolStaff();
+        allow delete: if schoolAdmin();
+      }
+
+      match /subjectAttendance/{id} {
+        allow read: if schoolStaff() || (hasRole('PARENT') && existing().studentId == getUserData().nis);
+        allow create: if isSchoolSubjectTeacher(schoolId) || isSchoolTeacher(schoolId) || schoolAdmin();
+        allow update: if isSchoolSubjectTeacher(schoolId) || isSchoolTeacher(schoolId) || schoolAdmin();
+        allow delete: if schoolAdmin();
+      }
+
+      match /subjectInquiries/{id} {
+        allow read: if schoolStaff();
+        allow create: if isSchoolSubjectTeacher(schoolId) || schoolAdmin();
+        allow update: if schoolStaff();
+        allow delete: if schoolAdmin();
+      }
+
+      match /notifications/{id} {
+        allow read: if isSignedIn() && (existing().targetUserId == request.auth.uid || existing().targetRole == getUserData().role || schoolAdmin());
+        allow create: if isSignedIn();
+        allow update: if isSignedIn() && (existing().targetUserId == request.auth.uid || schoolAdmin());
+        allow delete: if schoolAdmin();
+      }
+
+      match /tasks/{id} {
+        allow read: if isSignedIn();
+        allow create: if schoolStaff();
+        allow update, delete: if isSchoolAdmin(schoolId) || (schoolStaff() && existing().teacherId == request.auth.uid);
+      }
+      
+      match /schoolPresence/{id} {
+        allow read: if schoolStaff();
+        allow write: if schoolStaff();
+      }
+
+      match /attendance_alerts/{id} {
+        allow read: if schoolStaff();
+        allow write: if schoolStaff();
+      }
+      
+      match /classes/{id} {
+        allow read: if true;
+        allow write: if schoolAdmin();
+      }
+      
+      match /counselors/{id} {
+        allow read: if true;
+        allow write: if schoolAdmin();
+      }
+    }
+
+    // --- Support for direct root collections (for the case where schoolCode is 'default') ---
+    // (A bit redundant but matches current implementation)
+    match /subjectAttendance/{id} { allow read, write: if isSignedIn(); }
+    match /subjectInquiries/{id} { allow read, write: if isSignedIn(); }
+    match /notifications/{id} { allow read, write: if isSignedIn(); }
+    match /attendance/{id} { allow read, write: if isSignedIn(); }
+    match /tasks/{id} { allow read, write: if isSignedIn(); }
+    match /students/{id} { allow read, write: if isSignedIn(); }
+    match /teachers/{id} { allow read, write: if isSignedIn(); }
+    match /classes/{id} { allow read, write: if isSignedIn(); }
+    match /schoolData/{id} { allow read: if true; allow write: if isSystemAdmin(); }
+    match /schoolConfig/{id} { allow read: if true; allow write: if isSystemAdmin(); }
+    match /academicYears/{id} { allow read: if true; allow write: if isSystemAdmin(); }
+
+  }
+}

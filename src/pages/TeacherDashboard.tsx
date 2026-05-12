@@ -24,7 +24,10 @@ import {
   Trash2,
   MapPin,
   RefreshCw,
-  LayoutGrid
+  LayoutGrid,
+  ChevronUp,
+  ChevronDown,
+  ArrowUpDown
 } from 'lucide-react';
 import { db, auth, handleFirestoreError, storage } from '../lib/firebase';
 import { checkAttendanceAlert } from '../services/attendanceNotificationService';
@@ -53,8 +56,11 @@ export default function TeacherDashboard() {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [toastNotif, setToastNotif] = useState<{title: string, message: string} | null>(null);
+  const isInitialNotif = React.useRef(true);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: 'date' | 'type' | 'status' | 'studentName'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
   
   const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void}>({isOpen: false, message: '', onConfirm: () => {}});
   const showConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({isOpen: true, message, onConfirm});
@@ -340,7 +346,29 @@ export default function TeacherDashboard() {
       orderBy('createdAt', 'desc')
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setTeacherNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTeacherNotifications(docs);
+
+      if (isInitialNotif.current) {
+        isInitialNotif.current = false;
+        return;
+      }
+
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const newItem = change.doc.data();
+          if (!newItem.read) {
+            setToastNotif({
+              title: newItem.title || 'Pemberitahuan Baru',
+              message: newItem.message || 'Ada informasi baru untuk Anda.'
+            });
+            // Auto hide after 5s
+            setTimeout(() => setToastNotif(null), 5000);
+          }
+        }
+      });
+    }, (err) => {
+      handleFirestoreError(err, 'list', 'notifications');
     });
     return () => unsubscribe();
   }, [className, user]);
@@ -404,6 +432,7 @@ export default function TeacherDashboard() {
   console.log('DEBUG: activeTab is', activeTab);
   
   const [subjectAttendances, setSubjectAttendances] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
 
   useEffect(() => {
     if (!className || activeTab !== 'subject-attendance-report') return;
@@ -415,6 +444,19 @@ export default function TeacherDashboard() {
       setSubjectAttendances(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }).catch(console.error);
   }, [className, activeTab]);
+
+  useEffect(() => {
+    if (!className) return;
+    const qTasks = query(
+      getTenantCollection('tasks'),
+      where('className', '==', className),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubTasks = onSnapshot(qTasks, (snapshot) => {
+      setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => handleFirestoreError(err, 'list', 'tasks'));
+    return () => unsubTasks();
+  }, [className]);
 
   useEffect(() => {
     if (searchParams.get('showAddModal') === 'true') {
@@ -777,12 +819,27 @@ export default function TeacherDashboard() {
     });
   };
 
-  const filteredAttendance = attendance.filter(item => {
-    const matchesFilter = filterType === 'All' || item.type === filterType;
-    const matchesSearch = item.studentName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesDate = !filterDate || item.date === filterDate;
-    return matchesFilter && matchesSearch && matchesDate;
-  });
+  const filteredAttendance = attendance
+    .filter(item => {
+      const matchesFilter = filterType === 'All' || item.type === filterType;
+      const matchesSearch = item.studentName.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesDate = !filterDate || item.date === filterDate;
+      return matchesFilter && matchesSearch && matchesDate;
+    })
+    .sort((a, b) => {
+      const key = sortConfig.key;
+      const direction = sortConfig.direction === 'asc' ? 1 : -1;
+      
+      if (key === 'date') {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return (dateA - dateB) * direction;
+      }
+      
+      const valA = String(a[key] || '').toLowerCase();
+      const valB = String(b[key] || '').toLowerCase();
+      return valA.localeCompare(valB) * direction;
+    });
 
   const getShareMessage = () => {
     const appLink = window.location.origin + '?role=PARENT';
@@ -951,13 +1008,24 @@ export default function TeacherDashboard() {
   const handleResponseInquiry = async () => {
     if (!selectedInquiry || !inquiryResponse) return;
     try {
+      const now = new Date();
+      const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+      const dayName = days[now.getDay()];
+      const day = now.getDate();
+      const monthName = months[now.getMonth()];
+      const year = now.getFullYear();
+      const time = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+      
+      const fullResponse = `[${dayName}, ${day} ${monthName} ${year} - ${time}] ${inquiryResponse}`;
+
       await updateDoc(getTenantDoc('subjectInquiries', selectedInquiry.id), {
         replies: arrayUnion({
-          message: inquiryResponse,
+          message: fullResponse,
           sender: user?.name,
           createdAt: new Date()
         }),
-        response: inquiryResponse,
+        response: fullResponse,
         respondedBy: user?.name,
         respondedAt: serverTimestamp(),
         status: 'Dijawab'
@@ -1045,21 +1113,12 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {newAttendanceNotification && (
+        {toastNotif && (
           <div className="fixed top-20 right-6 z-50">
             <SimpleNotification 
-              message={newAttendanceNotification} 
-              onClose={() => setNewAttendanceNotification(null)}
-              title="Data Absensi Baru"
-            />
-          </div>
-        )}
-        {newInquiryNotification && (
-          <div className="fixed top-20 right-6 z-50 mt-16">
-            <SimpleNotification 
-              message={newInquiryNotification} 
-              onClose={() => setNewInquiryNotification(null)}
-              title="Pemberitahuan Baru"
+              message={toastNotif.message} 
+              onClose={() => setToastNotif(null)}
+              title={toastNotif.title}
             />
           </div>
         )}
@@ -1163,13 +1222,13 @@ export default function TeacherDashboard() {
                 <Clock size={14} /> DAFTAR SISWA TERLAMBAT ({filterDate || today})
              </h3>
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {attendance.filter(a => a.type === 'Terlambat' && a.date === (filterDate || today)).map((a, i) => (
+                {attendance.filter(a => (a.type as any) === 'Terlambat' && a.date === (filterDate || today)).map((a, i) => (
                    <div key={a.id ? `${a.id}-${i}` : `terlambat-${i}`} className="flex justify-between items-center p-3 bg-red-50 rounded-lg text-xs border border-red-100">
                       <span className="font-semibold">{a.studentName}</span>
                       <span className="font-mono text-red-600">{a.reason || 'Terlambat'}</span>
                    </div>
                 ))}
-                {attendance.filter(a => a.type === 'Terlambat' && a.date === (filterDate || today)).length === 0 && (
+                {attendance.filter(a => (a.type as any) === 'Terlambat' && a.date === (filterDate || today)).length === 0 && (
                    <p className="text-xs text-gray-400 p-3 italic">Tidak ada siswa terlambat pada tanggal ini.</p>
                 )}
              </div>
@@ -1647,12 +1706,72 @@ export default function TeacherDashboard() {
             <table className="w-full text-left min-w-[600px]">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-8 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Siswa</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tanggal</th>
+                  <th 
+                    className="px-8 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => {
+                      setSortConfig({
+                        key: 'studentName',
+                        direction: sortConfig.key === 'studentName' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                      });
+                    }}
+                  >
+                    <div className="flex items-center gap-1">
+                      Siswa
+                      {sortConfig.key === 'studentName' ? (
+                        sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                      ) : <ArrowUpDown size={12} className="opacity-30" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => {
+                      setSortConfig({
+                        key: 'date',
+                        direction: sortConfig.key === 'date' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                      });
+                    }}
+                  >
+                    <div className="flex items-center gap-1">
+                      Tanggal
+                      {sortConfig.key === 'date' ? (
+                        sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                      ) : <ArrowUpDown size={12} className="opacity-30" />}
+                    </div>
+                  </th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Jam Masuk</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">WA Ortu</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Jenis</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
+                  <th 
+                    className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => {
+                      setSortConfig({
+                        key: 'type',
+                        direction: sortConfig.key === 'type' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                      });
+                    }}
+                  >
+                    <div className="flex items-center gap-1">
+                      Jenis
+                      {sortConfig.key === 'type' ? (
+                        sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                      ) : <ArrowUpDown size={12} className="opacity-30" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => {
+                      setSortConfig({
+                        key: 'status',
+                        direction: sortConfig.key === 'status' && sortConfig.direction === 'asc' ? 'desc' : 'asc'
+                      });
+                    }}
+                  >
+                    <div className="flex items-center gap-1">
+                      Status
+                      {sortConfig.key === 'status' ? (
+                        sortConfig.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                      ) : <ArrowUpDown size={12} className="opacity-30" />}
+                    </div>
+                  </th>
                   <th className="px-6 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                 </tr>
               </thead>
@@ -2118,6 +2237,60 @@ export default function TeacherDashboard() {
              students={students} 
              selectedClass={className} 
            />
+        </div>
+      )}
+
+      {activeTab === 'tasks' && (
+        <div className="space-y-6 mb-6">
+          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+             <div className="flex items-center gap-3 mb-8">
+                <div className="p-3 bg-green-100 text-green-600 rounded-2xl">
+                  <FileText size={24} />
+                </div>
+                <div>
+                   <h3 className="text-lg font-bold text-gray-900 uppercase">Tugas Siswa Kelas {className}</h3>
+                   <p className="text-sm text-gray-500">Pantau tugas yang diberikan oleh Guru Mata Pelajaran untuk siswa kelas Anda</p>
+                </div>
+             </div>
+
+             <div className="w-full">
+                {tasks.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-20 text-gray-300">
+                     <FileText size={64} className="mb-4 opacity-10" />
+                     <p className="text-sm font-bold uppercase tracking-widest italic">Belum Ada Tugas</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="text-[10px] uppercase font-black text-gray-500 bg-gray-50 border-b border-gray-100">
+                        <tr>
+                          <th className="px-6 py-4 text-green-600">Mata Pelajaran</th>
+                          <th className="px-6 py-4">Judul Tugas</th>
+                          <th className="px-6 py-4">Deskripsi</th>
+                          <th className="px-6 py-4">Tenggat</th>
+                          <th className="px-6 py-4">Guru</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {tasks.map((task, idx) => (
+                          <tr key={`task-v2-${task.id || 't'}-${idx}`} className="hover:bg-green-50/30 transition-colors">
+                            <td className="px-6 py-4">
+                              <span className="px-3 py-1 bg-green-50 text-green-600 text-[10px] font-black uppercase tracking-widest rounded-full border border-green-100">
+                                {task.subjectName}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 font-bold text-gray-900">{task.title}</td>
+                            <td className="px-6 py-4 text-xs text-gray-600 max-w-[200px] truncate">{task.description || '-'}</td>
+                            <td className="px-6 py-4 font-bold text-orange-600 whitespace-nowrap">{formatDate(task.dueDate)}</td>
+                            <td className="px-6 py-4 text-xs font-semibold text-gray-500">{task.teacherName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+             </div>
+          </div>
         </div>
       )}
 
